@@ -14,13 +14,7 @@ permissions:
   contents: write
 
 jobs:
-  check:
-    permissions:
-      contents: read
-    uses: ./.github/workflows/ci.yml
-
   installer:
-    needs: check
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4

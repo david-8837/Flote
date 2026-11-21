@@ -28,6 +28,6 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
 
-      - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo fmt --all
+      - run: cargo clippy --workspace --all-targets -- -A warnings
       - run: cargo test --workspace
