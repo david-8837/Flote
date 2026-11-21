@@ -235,24 +235,21 @@ export function App() {
       .catch(() => setFailed(true));
   }, [confirmingReset, update]);
 
-  if (!config) return <div className="window" />;
-  const t = textsFor(config.language);
-
-  const isExplorerPinned = config.pinned.some((p) => p.toLowerCase().endsWith("explorer.exe"));
-  const toggleExplorer = useCallback((pinned: boolean) => {
+  const isExplorerPinned = config?.pinned.some((p) => p.toLowerCase().endsWith("explorer.exe")) ?? false;
+  const toggleExplorer = (pinned: boolean) => {
     setExplorerPinned(pinned)
       .then((saved) => setConfig(saved))
       .catch(() => setFailed(true));
-  }, []);
-  const handleRestoreLayout = useCallback(() => {
+  };
+  const handleRestoreLayout = () => {
     restoreDefaultTaskbarLayout()
       .then((saved) => setConfig(saved))
       .catch(() => setFailed(true));
-  }, []);
+  };
 
   const currentDurationMs =
-    config.genieDurationMs ??
-    (config.genieSpeed === "faster" ? 250 : config.genieSpeed === "fast" ? 350 : 500);
+    config?.genieDurationMs ??
+    (config?.genieSpeed === "faster" ? 250 : config?.genieSpeed === "fast" ? 350 : 500);
 
   const sliderVal =
     GENIE_DURATION_MS_RANGE.max + GENIE_DURATION_MS_RANGE.min - currentDurationMs;
@@ -274,12 +271,13 @@ export function App() {
   };
 
   const chooseFolder = () => {
+    if (!config) return;
     pickFolder(config.shortcutsFolder)
       .then((folder) => folder && update({ shortcutsFolder: folder }))
       .catch(() => setFailed(true));
   };
 
-  const handleChangeAppIcon = useCallback((appId: string) => {
+  const handleChangeAppIcon = (appId: string) => {
     pickIconFile()
       .then((path) => {
         if (path) {
@@ -287,28 +285,31 @@ export function App() {
         }
       })
       .catch(() => setFailed(true));
-  }, []);
+  };
 
-  const handleResetAppIcon = useCallback((appId: string) => {
+  const handleResetAppIcon = (appId: string) => {
     setCustomIcon(appId, null).then(setConfig).catch(() => setFailed(true));
-  }, []);
+  };
 
-  const handlePickNewCustomIcon = useCallback(() => {
+  const handlePickNewCustomIcon = () => {
     pickIconFile()
       .then((path) => {
-        if (path) {
+        if (path && config) {
           const pwa = config.pinned.find((p) => p.startsWith("pwa:")) || config.pinned[0];
           const target = pwa || "custom_app";
           setCustomIcon(target, path).then(setConfig).catch(() => setFailed(true));
         }
       })
       .catch(() => setFailed(true));
-  }, [config.pinned]);
+  };
+
   const appWindow = getCurrentWindow();
   const waiting = pendingUpdate(updateState);
-  // An update the user asked for keeps its banner even after "Later".
   const showBanner =
     waiting !== null && (!bannerDismissed || updateState.kind !== "available");
+
+  if (!config) return <div className="window" />;
+  const t = textsFor(config.language);
 
   return (
     <div className="window">
