@@ -51,6 +51,10 @@ pub struct Config {
     pub taskbar_pins: Option<Vec<String>>,
     #[serde(alias = "auto_hide")]
     pub auto_hide: bool,
+    /// Hover dwell delay before revealing the dock in milliseconds (0 ms to 400 ms).
+    /// Range: 0 to 400 ms (0 ms = instant). Default: 250 ms.
+    #[serde(alias = "auto_hide_delay_ms")]
+    pub auto_hide_delay_ms: Option<u32>,
     /// Icon side at rest, in logical pixels.
     pub icon_size: u32,
     pub magnification: bool,
@@ -206,6 +210,8 @@ pub const ICON_SIZE_RANGE: (u32, u32) = (20, 96);
 pub const MAX_MAGNIFIED_SIZE: u32 = 160;
 pub const GENIE_DURATION_MS_RANGE: (u32, u32) = (150, 1000);
 pub const DEFAULT_GENIE_DURATION_MS: u32 = 500;
+pub const AUTO_HIDE_DELAY_MS_RANGE: (u32, u32) = (0, 400);
+pub const DEFAULT_AUTO_HIDE_DELAY_MS: u32 = 250;
 
 impl Config {
     /// Brings out-of-range values (a hand-edited file) back into range.
@@ -218,11 +224,20 @@ impl Config {
         self.genie_duration_ms = self
             .genie_duration_ms
             .map(|ms| ms.clamp(GENIE_DURATION_MS_RANGE.0, GENIE_DURATION_MS_RANGE.1));
+        self.auto_hide_delay_ms = self
+            .auto_hide_delay_ms
+            .map(|ms| ms.clamp(AUTO_HIDE_DELAY_MS_RANGE.0, AUTO_HIDE_DELAY_MS_RANGE.1));
         self.shortcuts_folder = self
             .shortcuts_folder
             .map(|folder| folder.trim().to_owned())
             .filter(|folder| !folder.is_empty());
         self
+    }
+
+    /// Dwell delay before revealing an auto-hidden dock in milliseconds (0 ms to 400 ms).
+    #[must_use]
+    pub fn auto_hide_delay_ms_or_default(&self) -> u32 {
+        self.auto_hide_delay_ms.unwrap_or(DEFAULT_AUTO_HIDE_DELAY_MS)
     }
 
     /// Flight duration of the genie in seconds.
@@ -262,6 +277,7 @@ impl Default for Config {
             recent: Vec::new(),
             taskbar_pins: None,
             auto_hide: false,
+            auto_hide_delay_ms: Some(DEFAULT_AUTO_HIDE_DELAY_MS),
             icon_size: 48,
             magnification: true,
             dock_position: DockPosition::Bottom,
@@ -497,6 +513,29 @@ mod tests {
                 Some(enabled)
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn auto_hide_delay_round_trips_and_clamps() -> Result<(), ConfigError> {
+        let path = scratch("auto-hide-delay");
+        assert_eq!(Config::default().auto_hide_delay_ms, Some(DEFAULT_AUTO_HIDE_DELAY_MS));
+        let saved = update_preferences(
+            &path,
+            serde_json::Map::from_iter([("autoHideDelayMs".into(), 150.into())]),
+        )?;
+        assert_eq!(saved.auto_hide_delay_ms, Some(150));
+        assert_eq!(saved.auto_hide_delay_ms_or_default(), 150);
+
+        // Clamping check via sanitized
+        let mut config = Config::default();
+        config.auto_hide_delay_ms = Some(999);
+        assert_eq!(config.sanitized().auto_hide_delay_ms, Some(AUTO_HIDE_DELAY_MS_RANGE.1));
+
+        let mut config_zero = Config::default();
+        config_zero.auto_hide_delay_ms = Some(0);
+        assert_eq!(config_zero.sanitized().auto_hide_delay_ms, Some(0));
+        assert_eq!(config_zero.auto_hide_delay_ms_or_default(), 0);
         Ok(())
     }
 

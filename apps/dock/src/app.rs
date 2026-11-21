@@ -240,6 +240,7 @@ const ASSETS_DELAY_MS: u32 = 16;
 /// Armed only while dragging or holding a draggable icon.
 const DRAG_TIMER: usize = 16;
 const DRAG_POLL_MS: u32 = 16;
+const REVEAL_TIMER: usize = 17;
 
 /// Auto-hide slide speed (about 250 ms).
 const SLIDE_OMEGA: f32 = 24.0;
@@ -848,6 +849,8 @@ struct App {
     /// The icon following the pointer while an app is dragged out of a group.
     ghost: Option<DragGhost>,
     menu_open: bool,
+    /// Pending hover dwell to reveal an auto-hidden dock.
+    reveal_pending: bool,
     /// The crab, while it is out (see `perform`).
     mascot: Option<mascot::Mascot>,
     /// Charging and energy saver at the last power change.
@@ -946,6 +949,7 @@ fn save_dock_config(roster: &Roster, config: &Config, toggle_hide: bool) -> Resu
         saved.genie_duration_ms = config.genie_duration_ms;
         saved.genie_speed = config.genie_speed;
         saved.custom_icons = config.custom_icons.clone();
+        saved.auto_hide_delay_ms = config.auto_hide_delay_ms;
         if toggle_hide {
             saved.auto_hide = !saved.auto_hide;
         }
@@ -1994,15 +1998,19 @@ impl App {
 
         self.cursor = along;
         if !self.hovering {
-            self.hovering = true;
-            self.amount.target = 1.0;
-            self.slide.target = 0.0;
-            self.last_frame = Instant::now();
-            // SAFETY: Timer on our own window; killing a timer that is not set is harmless.
-            unsafe {
-                let _ = KillTimer(Some(self.input), HIDE_TIMER);
+            let delay_ms = self.config.auto_hide_delay_ms_or_default();
+            if self.config.auto_hide && self.slide.target == 1.0 && delay_ms > 0 {
+                if !self.reveal_pending {
+                    self.reveal_pending = true;
+                    // SAFETY: One-shot reveal dwell timer on our own input window.
+                    unsafe {
+                        SetTimer(Some(self.input), REVEAL_TIMER, delay_ms, None);
+                    }
+                }
+                self.track_leave()?;
+                return Ok(());
             }
-            self.place_windows()?;
+            return self.reveal_from_edge();
         }
         // Every move, not only on entering: a menu or a drag that captures
         // the mouse cancels the request, and without it the dock would
@@ -2010,6 +2018,52 @@ impl App {
         self.track_leave()?;
         self.render()?;
         self.aim_preview();
+        Ok(())
+    }
+
+    /// Reveals a hidden dock when the cursor enters or dwells on the screen edge.
+    fn reveal_from_edge(&mut self) -> Result<()> {
+        self.hovering = true;
+        self.amount.target = 1.0;
+        self.slide.target = 0.0;
+        self.last_frame = Instant::now();
+        // SAFETY: Timers on our own window; killing a timer that is not set is harmless.
+        unsafe {
+            let _ = KillTimer(Some(self.input), HIDE_TIMER);
+            let _ = KillTimer(Some(self.input), REVEAL_TIMER);
+        }
+        self.reveal_pending = false;
+        self.place_windows()?;
+        self.track_leave()?;
+        self.render()?;
+        self.aim_preview();
+        Ok(())
+    }
+
+    /// Fired when cursor has dwelled on the dock reveal edge for `auto_hide_delay_ms`.
+    fn on_reveal_timer(&mut self) -> Result<()> {
+        // SAFETY: Timer on our own window.
+        unsafe {
+            let _ = KillTimer(Some(self.input), REVEAL_TIMER);
+        }
+        if !self.reveal_pending {
+            return Ok(());
+        }
+        self.reveal_pending = false;
+        if !self.config.auto_hide || self.hovering || self.fullscreen || self.menu_open {
+            return Ok(());
+        }
+        let mut point = POINT::default();
+        // SAFETY: Valid output for this call.
+        unsafe { GetCursorPos(&mut point)? };
+        let is_over = self.stage.as_ref().is_some_and(|stage| stage.spans_reveal(point))
+            || unsafe { windows::Win32::UI::WindowsAndMessaging::WindowFromPoint(point) == self.input };
+        if is_over {
+            if let Some(stage) = &self.stage {
+                self.cursor = stage.to_dock(point).0;
+            }
+            self.reveal_from_edge()?;
+        }
         Ok(())
     }
 
@@ -2156,6 +2210,13 @@ impl App {
     }
 
     fn on_mouse_leave(&mut self) -> Result<()> {
+        if self.reveal_pending {
+            self.reveal_pending = false;
+            // SAFETY: Timer on our own input window.
+            unsafe {
+                let _ = KillTimer(Some(self.input), REVEAL_TIMER);
+            }
+        }
         if !self.hovering || self.drag.is_some() || self.drag_over || self.menu_open {
             return Ok(());
         }
@@ -3925,8 +3986,9 @@ impl App {
             self.last_frame = Instant::now();
         }
         let moved = config.dock_position != self.config.dock_position;
+        let delay_changed = config.auto_hide_delay_ms != self.config.auto_hide_delay_ms;
         self.config = config;
-        if moved {
+        if moved || delay_changed {
             // A hidden dock comes out of its new edge on every display.
             self.apply_edge_settings();
         }
@@ -4382,6 +4444,9 @@ impl App {
     }
 
     fn apply_edge_settings(&mut self) {
+        edge_watch::set_dock_dwell(std::time::Duration::from_millis(
+            self.config.auto_hide_delay_ms_or_default() as u64,
+        ));
         if !self.config.auto_hide {
             self.dock_display = None;
         }
@@ -4504,7 +4569,9 @@ impl App {
             .as_ref()
             .is_some_and(|stage| stage.spans_reveal(point))
         {
-            return self.on_mouse_move();
+            let (along, _) = self.stage.as_ref().map(|s| s.to_dock(point)).unwrap_or((0.0, 0.0));
+            self.cursor = along;
+            return self.reveal_from_edge();
         }
         self.slide.target = 0.0;
         self.last_frame = Instant::now();
@@ -4512,7 +4579,9 @@ impl App {
         // delay. Cancel any delay left over from the previous monitor.
         unsafe {
             let _ = KillTimer(Some(self.input), HIDE_TIMER);
+            let _ = KillTimer(Some(self.input), REVEAL_TIMER);
         }
+        self.reveal_pending = false;
         self.place_windows()?;
         self.render()
     }
@@ -5334,6 +5403,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
         edge_watch::CHANGED => with_app("borde de pantalla", App::edge_changed),
         WM_TIMER if w.0 == EDGE_TIMER => with_app("mostrar al llegar al borde", App::edge_rested),
         WM_TIMER if w.0 == PREVIEW_TIMER => with_app("selector de ventanas", App::preview_tick),
+        WM_TIMER if w.0 == REVEAL_TIMER => with_app("mostrar al pausar sobre el borde", App::on_reveal_timer),
         WM_TIMER if w.0 == HIDE_TIMER => {
             // SAFETY: Same as above.
             unsafe {
@@ -5612,6 +5682,7 @@ pub fn run() -> Result<()> {
             group_was_open: None,
             ghost: None,
             menu_open: false,
+            reveal_pending: false,
             mascot: None,
             // Initial registration notifications establish the baseline after
             // the queue starts, without playing a startup charging/saver act.

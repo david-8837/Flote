@@ -9,6 +9,8 @@ import {
   type IslandStyle,
   type Language,
   type UpdateInfo,
+  AUTO_HIDE_DELAY_MS_RANGE,
+  DEFAULT_AUTO_HIDE_DELAY_MS,
   DEFAULT_GENIE_DURATION_MS,
   GENIE_DURATION_MS_RANGE,
   ICON_SIZE,
@@ -422,6 +424,26 @@ export function App() {
                     onChange={(autoHide) => update({ autoHide })}
                   />
                 </Row>
+                <SubRow
+                  label={t.autoHideDelay}
+                  hint={t.autoHideDelayHint}
+                  open={config.autoHide}
+                >
+                  <Slider
+                    label={t.autoHideDelay}
+                    min={AUTO_HIDE_DELAY_MS_RANGE.min}
+                    max={AUTO_HIDE_DELAY_MS_RANGE.max}
+                    step={25}
+                    unit=" ms"
+                    value={config.autoHideDelayMs ?? DEFAULT_AUTO_HIDE_DELAY_MS}
+                    displayValue={
+                      (config.autoHideDelayMs ?? DEFAULT_AUTO_HIDE_DELAY_MS) === 0
+                        ? t.autoHideDelayInstant
+                        : `${config.autoHideDelayMs ?? DEFAULT_AUTO_HIDE_DELAY_MS} ms`
+                    }
+                    onChange={(autoHideDelayMs) => update({ autoHideDelayMs })}
+                  />
+                </SubRow>
                 <Row icon={<SettingIcon name="bounce" />} label={t.bounceOnOpen}>
                   <Toggle
                     label={t.bounceOnOpen}

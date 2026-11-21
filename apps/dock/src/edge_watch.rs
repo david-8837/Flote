@@ -44,7 +44,6 @@ pub enum Reveal {
     Ready(Target),
 }
 
-#[derive(Default)]
 struct Edges {
     window: isize,
     top: Option<RECT>,
@@ -54,6 +53,22 @@ struct Edges {
     pointer_screen: Option<RECT>,
     target: Option<Target>,
     entered: Option<Instant>,
+    dock_dwell: Duration,
+}
+
+impl Default for Edges {
+    fn default() -> Self {
+        Self {
+            window: 0,
+            top: None,
+            screens: Vec::new(),
+            dock_edge: DockEdge::Bottom,
+            pointer_screen: None,
+            target: None,
+            entered: None,
+            dock_dwell: DWELL,
+        }
+    }
 }
 
 static EDGES: Mutex<Edges> = Mutex::new(Edges {
@@ -64,9 +79,16 @@ static EDGES: Mutex<Edges> = Mutex::new(Edges {
     pointer_screen: None,
     target: None,
     entered: None,
+    dock_dwell: DWELL,
 });
 
 impl Edges {
+    fn delay_for(&self, target: Target) -> Duration {
+        match target {
+            Target::MenuBar => MENU_DWELL,
+            Target::Dock(_) => self.dock_dwell,
+        }
+    }
     fn at(&self, point: POINT, screen: Option<RECT>) -> Option<Target> {
         if self.top.is_some_and(|top| {
             (top.left..top.right).contains(&point.x)
@@ -127,7 +149,7 @@ impl Edges {
             return Reveal::Idle;
         };
         let elapsed = now.saturating_duration_since(entered);
-        let delay = target.delay();
+        let delay = self.delay_for(target);
         if elapsed < delay {
             return Reveal::Wait(delay - elapsed);
         }
@@ -142,6 +164,11 @@ fn lock() -> MutexGuard<'static, Edges> {
 
 pub fn set_menu_bar(top: Option<RECT>) {
     lock().set_top(top);
+}
+
+/// Sets the hover reveal dwell delay for the dock.
+pub fn set_dock_dwell(delay: Duration) {
+    lock().dock_dwell = delay;
 }
 
 /// The displays a hidden dock can come out on, from `edge` of each.
@@ -161,7 +188,7 @@ pub fn pending() -> (Option<Target>, Option<Duration>) {
         edges
             .entered
             .zip(edges.target)
-            .map(|(entered, target)| target.delay().saturating_sub(entered.elapsed())),
+            .map(|(entered, target)| edges.delay_for(target).saturating_sub(entered.elapsed())),
     )
 }
 

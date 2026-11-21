@@ -11,6 +11,7 @@ export interface Config {
   pinned: string[];
   recent: string[];
   autoHide: boolean;
+  autoHideDelayMs: number | null;
   iconSize: number;
   magnification: boolean;
   magnifiedSize: number;
@@ -50,6 +51,8 @@ export const ICON_SIZE = { min: 20, max: 96 } as const;
 export const MAX_MAGNIFIED_SIZE = 160;
 export const GENIE_DURATION_MS_RANGE = { min: 150, max: 1000 } as const;
 export const DEFAULT_GENIE_DURATION_MS = 500;
+export const AUTO_HIDE_DELAY_MS_RANGE = { min: 0, max: 400 } as const;
+export const DEFAULT_AUTO_HIDE_DELAY_MS = 250;
 
 export const loadConfig = () => invoke<Config>("get_config");
 export const defaultConfig = () => invoke<Config>("default_config");
