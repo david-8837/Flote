@@ -3959,7 +3959,7 @@ impl App {
             return Ok(());
         }
         if custom_icons_changed {
-            for id in saved.custom_icons.keys().chain(self.config.custom_icons.keys()) {
+            for id in config.custom_icons.keys().chain(self.config.custom_icons.keys()) {
                 self.assets.remove(id);
                 self.icons.remove(id);
             }
