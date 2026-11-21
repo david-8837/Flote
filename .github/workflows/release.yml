@@ -243,11 +243,18 @@ jobs:
           $section = if ($end) { $rest[0..($end - 2)] } else { $rest }
           $section | Set-Content -Encoding utf8NoBOM notes.md
 
-      - name: Create draft release
+      - name: Upload installer artifact
+        if: env.SIGNING_MODE != 'Test'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Flote-Setup-Installer
+          path: upload/
+
+      - name: Create release
         if: env.SIGNING_MODE != 'Test'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create $env:GITHUB_REF_NAME (Get-ChildItem upload).FullName `
-            --draft --notes-file notes.md --title "Flote $env:GITHUB_REF_NAME"
+            --clobber --notes-file notes.md --title "Flote $env:GITHUB_REF_NAME"
