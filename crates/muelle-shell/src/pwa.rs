@@ -42,7 +42,15 @@ pub fn detect_pwa(hwnd: HWND, image: &str) -> Option<String> {
     let exe = image.rsplit('\\').next().unwrap_or("").to_lowercase();
     if !matches!(
         exe.as_str(),
-        "chrome.exe" | "msedge.exe" | "brave.exe" | "chromium.exe" | "vivaldi.exe" | "opera.exe"
+        "chrome.exe"
+            | "chrome_proxy.exe"
+            | "msedge.exe"
+            | "msedge_proxy.exe"
+            | "brave.exe"
+            | "brave_proxy.exe"
+            | "chromium.exe"
+            | "vivaldi.exe"
+            | "opera.exe"
     ) {
         return None;
     }
@@ -96,12 +104,59 @@ pub fn pwa_display_name(pwa_id: &str) -> String {
         }
     }
     if let Some(aumid) = pwa_aumid(pwa_id) {
+        let crx_id = aumid.split("_crx_").nth(1).unwrap_or(aumid);
+        if let Some((_, name)) = find_pwa_web_app_icon(crx_id) {
+            return name;
+        }
         if let Some((_, app_id)) = aumid.split_once("_crx_") {
             return format!("Web App ({})", &app_id[..8.min(app_id.len())]);
         }
         return aumid.to_owned();
     }
     "Web App".to_owned()
+}
+
+/// Locates a web application's installed icon (.ico) directly from Chromium User Data.
+#[must_use]
+pub fn find_pwa_web_app_icon(crx_id: &str) -> Option<(PathBuf, String)> {
+    let local = env::var_os("LOCALAPPDATA").map(PathBuf::from)?;
+    let browsers = [
+        local.join(r"Google\Chrome\User Data"),
+        local.join(r"Microsoft\Edge\User Data"),
+        local.join(r"BraveSoftware\Brave-Browser\User Data"),
+        local.join(r"Chromium\User Data"),
+    ];
+
+    let crx_dir_name = format!("_crx_{crx_id}");
+
+    for user_data in &browsers {
+        if !user_data.is_dir() {
+            continue;
+        }
+        let Ok(profiles) = fs::read_dir(user_data) else {
+            continue;
+        };
+        for profile in profiles.flatten() {
+            let web_apps = profile.path().join("Web Applications").join(&crx_dir_name);
+            if !web_apps.is_dir() {
+                continue;
+            }
+            if let Ok(entries) = fs::read_dir(&web_apps) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("ico")) {
+                        let name = path
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("Web App")
+                            .to_owned();
+                        return Some((path, name));
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Searches the system for the shortcut (.lnk) corresponding to a PWA identifier.
@@ -132,6 +187,10 @@ pub fn find_pwa_shortcut(pwa_id: &str) -> Option<PathBuf> {
     }
     if let Some(ref home) = userprofile {
         search_dirs.push(home.join("Desktop"));
+        search_dirs.push(home.join(r"OneDrive\Desktop"));
+    }
+    if let Some(pub_dir) = env::var_os("PUBLIC").map(PathBuf::from) {
+        search_dirs.push(pub_dir.join("Desktop"));
     }
 
     for dir in search_dirs {
@@ -189,7 +248,15 @@ pub fn pwa_id_from_shortcut(link: &Path, target: &str, arguments: &str) -> Optio
     let exe = target.rsplit('\\').next().unwrap_or("").to_lowercase();
     if !matches!(
         exe.as_str(),
-        "chrome.exe" | "msedge.exe" | "brave.exe" | "chromium.exe" | "vivaldi.exe"
+        "chrome.exe"
+            | "chrome_proxy.exe"
+            | "msedge.exe"
+            | "msedge_proxy.exe"
+            | "brave.exe"
+            | "brave_proxy.exe"
+            | "chromium.exe"
+            | "vivaldi.exe"
+            | "opera.exe"
     ) {
         return None;
     }

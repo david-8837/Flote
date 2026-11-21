@@ -2895,6 +2895,21 @@ impl App {
             self.amount.value,
             &stage.magnifier,
         );
+
+        // When dragging a pinnable app or shortcut, dropping anywhere on the dock pins it!
+        // It must NEVER trigger OpenWith or spring open an existing app under the cursor.
+        if self.incoming_pin.is_some() {
+            let target = state
+                .icon_at(&stage.layout, self.cursor, stage.gap)
+                .and_then(|index| self.entries.get(index));
+            if let Some(entry) = target {
+                if entry.role == Role::Trash {
+                    return DropAction::Recycle;
+                }
+            }
+            return self.pin_action(&state);
+        }
+
         let target = state
             .icon_at(&stage.layout, self.cursor, stage.gap)
             .and_then(|index| self.entries.get(index));
@@ -2981,6 +2996,9 @@ impl App {
     /// The entry under a drag that can spring open: an app with windows, or
     /// a minimized window's thumbnail.
     fn spring_target(&self) -> Option<String> {
+        if self.incoming_pin.is_some() {
+            return None;
+        }
         let entry = self.hovered.and_then(|index| self.entries.get(index))?;
         let id = entry.id.clone()?;
         match entry.role {

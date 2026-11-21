@@ -8,6 +8,18 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ## [Unreleased]
 
+## [0.1.20]
+
+### English
+
+- Fix drag-and-drop pinning: Dragging any app or shortcut directly onto existing dock icons now smoothly inserts and pins the app at that position without triggering "Open With" or springing open background windows.
+- PWA & Web Shortcut Detection: Added comprehensive recognition for Chromium proxy launchers (`chrome_proxy.exe`, `msedge_proxy.exe`, `brave_proxy.exe`), OneDrive Desktop directories, and local Web Application icon stores, correctly resolving Gemini, Pinterest, and custom web apps with their authentic names and high-resolution icons.
+
+### Español
+
+- Corrección del arrastre para anclar: Al arrastrar cualquier app o acceso directo sobre los iconos del dock, ahora se inserta y ancla suavemente en esa posición sin ejecutar "Abrir con" ni desplegar ventanas de fondo.
+- Detección de PWAs y accesos web: Se añadió reconocimiento para lanzadores proxy de Chromium (`chrome_proxy.exe`, `msedge_proxy.exe`, `brave_proxy.exe`), escritorios de OneDrive y almacenamiento de iconos de aplicaciones web, mostrando Gemini, Pinterest y apps web con sus nombres reales e iconos de alta resolución.
+
 ## [0.1.19]
 
 ### English

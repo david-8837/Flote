@@ -346,6 +346,13 @@ pub fn shortcut_id(link: &Path) -> Option<String> {
     Some(if is_program(&target) {
         if let Some(pwa_id) = crate::pwa::pwa_id_from_shortcut(link, &target, &arguments) {
             pwa_id
+        } else if target.to_lowercase().ends_with("_proxy.exe")
+            || (!arguments.is_empty()
+                && (arguments.contains("http://")
+                    || arguments.contains("https://")
+                    || arguments.contains("--app")))
+        {
+            normalize_id(&link.to_string_lossy())
         } else {
             normalize_id(&target)
         }

@@ -13,7 +13,7 @@ export const site = {
   releases: "https://github.com/david-8837/Flote/releases",
   download: "https://github.com/david-8837/Flote/releases/latest/download/Flote-Setup.exe",
   issues: "https://github.com/david-8837/Flote/issues",
-  version: "0.1.19",
+  version: "0.1.20",
   license: "MIT",
 } as const;
 

@@ -67,7 +67,14 @@ impl IconCache {
     pub fn get_variant(&self, id: &str, variant: &str, size: u32) -> Result<AppVisual, IconError> {
         let custom_icon = crate::pwa::custom_icon_path(id);
         let pwa_shortcut = if crate::pwa::is_pwa(id) {
-            crate::pwa::find_pwa_shortcut(id).map(|p| p.to_string_lossy().into_owned())
+            crate::pwa::find_pwa_shortcut(id)
+                .map(|p| p.to_string_lossy().into_owned())
+                .or_else(|| {
+                    let aumid = crate::pwa::pwa_aumid(id)?;
+                    let crx_id = aumid.split("_crx_").nth(1).unwrap_or(aumid);
+                    crate::pwa::find_pwa_web_app_icon(crx_id)
+                        .map(|(p, _)| p.to_string_lossy().into_owned())
+                })
         } else {
             None
         };
