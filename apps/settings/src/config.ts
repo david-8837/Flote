@@ -17,6 +17,10 @@ export interface Config {
   dockPosition: DockPosition;
   genie: boolean;
   genieSpeed: GenieSpeed;
+  genieDurationMs: number | null;
+  showStart: boolean;
+  showDownloads: boolean;
+  showRecycleBin: boolean;
   showMinimized: boolean;
   menuBar: boolean;
   menuBarAutoHide: boolean;
@@ -38,14 +42,26 @@ export interface Config {
   language: Language;
   /** The folder shown at the right of the dock, whose contents open as a menu. */
   shortcutsFolder: string | null;
+  /** Custom icons chosen by the user for apps or PWAs (`app_id` -> file path). */
+  customIcons?: Record<string, string>;
 }
 
-export const ICON_SIZE = { min: 32, max: 96 } as const;
+export const ICON_SIZE = { min: 20, max: 96 } as const;
 export const MAX_MAGNIFIED_SIZE = 160;
+export const GENIE_DURATION_MS_RANGE = { min: 150, max: 1000 } as const;
+export const DEFAULT_GENIE_DURATION_MS = 500;
 
 export const loadConfig = () => invoke<Config>("get_config");
 export const defaultConfig = () => invoke<Config>("default_config");
 export const saveConfig = (patch: Partial<Config>) => invoke<Config>("set_config", { patch });
+export const setExplorerPinned = (pinned: boolean) =>
+  invoke<Config>("set_explorer_pinned", { pinned });
+export const restoreDefaultTaskbarLayout = () =>
+  invoke<Config>("restore_default_taskbar_layout");
+export const pickIconFile = (current?: string | null) =>
+  invoke<string | null>("pick_icon_file", { current: current ?? null });
+export const setCustomIcon = (appId: string, iconPath: string | null) =>
+  invoke<Config>("set_custom_icon", { appId, iconPath });
 export const getAutostart = () => invoke<boolean>("get_autostart");
 /** Windows' animation setting; the genie only plays while it is on. */
 export const windowsAnimations = () => invoke<boolean>("windows_animations");

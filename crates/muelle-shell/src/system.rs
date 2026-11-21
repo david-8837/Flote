@@ -250,6 +250,15 @@ pub fn downloads_folder() -> Option<String> {
     }
 }
 
+/// Normalized ID of Windows File Explorer.
+#[must_use]
+pub fn explorer_id() -> String {
+    crate::tracker::normalize_id(&format!(
+        "{}\\explorer.exe",
+        std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into())
+    ))
+}
+
 /// The languages Muelle's text comes in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UiLanguage {

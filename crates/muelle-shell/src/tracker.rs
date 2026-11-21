@@ -525,11 +525,11 @@ fn app_id(hwnd: HWND) -> Option<String> {
             .ok()
             .map(|()| {
                 let image = String::from_utf16_lossy(&buffer[..len as usize]);
-                // A program whose windows belong to a host that is no .exe
-                // (LibreOffice's soffice.bin) has no icon or name of its own
-                // there; its windows say which app they are (Calc, Writer),
-                // and the taskbar shows that app.
-                if is_program(&image) {
+                // Standalone web application windows (PWAs in Chrome, Edge, Brave)
+                // get their own distinct identity instead of sharing the browser's.
+                if let Some(pwa_id) = crate::pwa::detect_pwa(hwnd, &image) {
+                    pwa_id
+                } else if is_program(&image) {
                     normalize_id(&image)
                 } else {
                     window_aumid(hwnd).map_or_else(

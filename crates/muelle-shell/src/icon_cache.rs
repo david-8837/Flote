@@ -65,12 +65,28 @@ impl IconCache {
     /// Like [`get`](Self::get), but stores each `variant` separately for items
     /// whose icon depends on their state, such as an empty or full recycle bin.
     pub fn get_variant(&self, id: &str, variant: &str, size: u32) -> Result<AppVisual, IconError> {
-        // A program pinned from a shortcut Muelle keeps shows that shortcut's
-        // name and icon ("Launch Hidden", not "Windows Based Script Host"),
-        // as the taskbar does. Part of the key, so replacing or removing the
-        // shortcut never shows a stale label.
+        let custom_icon = crate::pwa::custom_icon_path(id);
+        let pwa_shortcut = if crate::pwa::is_pwa(id) {
+            crate::pwa::find_pwa_shortcut(id).map(|p| p.to_string_lossy().into_owned())
+        } else {
+            None
+        };
         let kept = crate::pins::kept_shortcut_for(id);
-        let source = kept.as_deref().unwrap_or(id);
+        let source_str = if let Some(ref custom) = custom_icon {
+            custom.clone()
+        } else if let Some(ref pwa) = pwa_shortcut {
+            pwa.clone()
+        } else if crate::pwa::is_pwa(id) {
+            if let Some(aumid) = crate::pwa::pwa_aumid(id) {
+                format!("shell:AppsFolder\\{aumid}")
+            } else {
+                id.to_owned()
+            }
+        } else {
+            kept.unwrap_or_else(|| id.to_owned())
+        };
+        let source = source_str.as_str();
+
         let path = self.entry_path(&format!("{source}|{variant}"), size);
         // The recycle bin's two icons come from where Windows names them, not
         // from the shell item, which shows whichever state Explorer has drawn
@@ -88,10 +104,24 @@ impl IconCache {
 
         let icon = match &bin_icon {
             Some((file, index)) => load_icon_at(file, *index, size)?,
-            None => load_icon(source, size)?,
+            None => load_icon(source, size).or_else(|err| {
+                if crate::pwa::is_pwa(id) {
+                    if let Ok(browser_icon) = load_icon("msedge.exe", size)
+                        .or_else(|_| load_icon("chrome.exe", size))
+                    {
+                        return Ok(browser_icon);
+                    }
+                }
+                Err(err)
+            })?,
+        };
+        let name = if crate::pwa::is_pwa(id) {
+            crate::pwa::pwa_display_name(id)
+        } else {
+            display_name(source)
         };
         let visual = AppVisual {
-            name: display_name(source),
+            name,
             icon,
         };
         // An unwritable cache only makes the next startup slower.

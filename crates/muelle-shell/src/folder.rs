@@ -128,6 +128,46 @@ pub fn pick(owner: isize, initial: Option<&str>) -> Option<String> {
     picked.ok()
 }
 
+/// Asks for an icon or image file (.ico, .png, .jpg, .bmp) with the standard Windows file dialog;
+/// `None` if the user cancels.
+#[must_use]
+pub fn pick_icon_file(owner: isize, initial: Option<&str>) -> Option<String> {
+    use windows::{core::w, Win32::UI::Shell::Common::COMDLG_FILTERSPEC};
+    let com = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+    let picked = (|| -> windows::core::Result<String> {
+        unsafe {
+            let dialog: IFileOpenDialog =
+                CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
+            dialog.SetOptions(dialog.GetOptions()? | FOS_FORCEFILESYSTEM)?;
+            let filters = [
+                COMDLG_FILTERSPEC {
+                    pszName: w!("Icon and Image Files (*.ico;*.png;*.jpg;*.jpeg;*.bmp)"),
+                    pszSpec: w!("*.ico;*.png;*.jpg;*.jpeg;*.bmp"),
+                },
+                COMDLG_FILTERSPEC {
+                    pszName: w!("All Files (*.*)"),
+                    pszSpec: w!("*.*"),
+                },
+            ];
+            dialog.SetFileTypes(&filters)?;
+            if let Some(start) = initial.and_then(|path| {
+                SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(path), None).ok()
+            }) {
+                let _ = dialog.SetFolder(&start);
+            }
+            dialog.Show(Some(HWND(owner as *mut _)))?;
+            let raw = dialog.GetResult()?.GetDisplayName(SIGDN_FILESYSPATH)?;
+            let path = raw.to_string();
+            CoTaskMemFree(Some(raw.0.cast()));
+            path.map_err(|_| E_FAIL.into())
+        }
+    })();
+    if com.is_ok() {
+        unsafe { CoUninitialize() };
+    }
+    picked.ok()
+}
+
 fn pick_in_apartment(owner: isize, initial: Option<&str>) -> windows::core::Result<String> {
     // SAFETY: COM calls with arguments that live for each call; the path the
     // dialog returns is freed once copied.

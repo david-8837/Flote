@@ -587,6 +587,97 @@ input:focus-visible {
   color: #fff;
 }
 
+.push-sm {
+  padding: 2px 10px;
+  font-size: 11px;
+}
+
+.genie-preview-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 8px 0;
+  width: 100%;
+}
+
+.genie-preview-canvas {
+  width: 100%;
+  max-width: 260px;
+  height: 100px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.genie-speed-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.genie-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.genie-speed-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+.genie-speed-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.custom-icons-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.custom-icon-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06));
+}
+
+.custom-icon-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+.custom-icon-path {
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.custom-icons-empty {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 4px 0;
+  line-height: 1.4;
+}
+
 .error {
   color: #ff453a;
   margin: 0;

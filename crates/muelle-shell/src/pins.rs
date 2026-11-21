@@ -307,6 +307,9 @@ fn invoke_verb(path: &str, verb: &str) -> bool {
 /// Requires COM on the calling thread.
 #[must_use]
 pub fn app_exists(id: &str) -> bool {
+    if crate::pwa::is_pwa(id) {
+        return true;
+    }
     if id.starts_with("shell:AppsFolder\\") {
         // SAFETY: Only asks the shell whether it can resolve the item.
         return unsafe {
@@ -338,10 +341,14 @@ pub fn link_target(link: &Path) -> Option<String> {
 /// Requires COM to be initialized on the calling thread.
 #[must_use]
 pub fn shortcut_id(link: &Path) -> Option<String> {
-    let (target, _) = read_link(link)?;
+    let (target, arguments) = read_link(link)?;
     let target = target.filter(|target| Path::new(target).exists())?;
     Some(if is_program(&target) {
-        normalize_id(&target)
+        if let Some(pwa_id) = crate::pwa::pwa_id_from_shortcut(link, &target, &arguments) {
+            pwa_id
+        } else {
+            normalize_id(&target)
+        }
     } else {
         normalize_id(&link.to_string_lossy())
     })
@@ -355,6 +362,14 @@ pub fn shortcut_id(link: &Path) -> Option<String> {
 /// Requires COM to be initialized on the calling thread.
 #[must_use]
 pub fn launch_target(id: &str) -> Option<String> {
+    if crate::pwa::is_pwa(id) {
+        if let Some(shortcut) = crate::pwa::find_pwa_shortcut(id) {
+            return Some(shortcut.to_string_lossy().into_owned());
+        }
+        if let Some(aumid) = crate::pwa::pwa_aumid(id) {
+            return Some(format!("shell:AppsFolder\\{aumid}"));
+        }
+    }
     if crate::tracker::is_shortcut(id) || id.starts_with("shell:") {
         return None;
     }
@@ -380,6 +395,9 @@ pub fn launch_target(id: &str) -> Option<String> {
 /// Requires COM to be initialized on the calling thread.
 #[must_use]
 pub fn kept_shortcut_for(id: &str) -> Option<String> {
+    if crate::pwa::is_pwa(id) {
+        return crate::pwa::find_pwa_shortcut(id).map(|p| p.to_string_lossy().into_owned());
+    }
     if crate::tracker::is_shortcut(id) || id.starts_with("shell:") {
         return None;
     }
@@ -496,6 +514,10 @@ fn same_path(a: &Path, b: &Path) -> bool {
 
 /// The program a shortcut opens (`None` when it points at no file, such as
 /// a Control Panel item) and its arguments.
+pub fn link_target_and_arguments(link: &Path) -> Option<(Option<String>, String)> {
+    read_link(link)
+}
+
 fn read_link(link: &Path) -> Option<(Option<String>, String)> {
     // SAFETY: COM calls use buffers and strings that remain alive for the duration of each call.
     unsafe {

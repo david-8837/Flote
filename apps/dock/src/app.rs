@@ -43,7 +43,7 @@ use muelle_shell::{
     recycle_bin::{self, BinWatch},
     status,
     system::{
-        Monitor, animations_enabled, downloads_folder, monitor_at, monitor_rects, primary_monitor,
+        Monitor, animations_enabled, downloads_folder, explorer_id, monitor_at, monitor_rects, primary_monitor,
         set_window_transitions, transparency_enabled, uses_light_theme,
     },
     taskbar,
@@ -280,6 +280,13 @@ const CMD_UNGROUP: u32 = 15;
 const CMD_REMOVE_FOLDER: u32 = 16;
 const CMD_FORGET_RECENT: u32 = 17;
 const CMD_END_TASK: u32 = 18;
+const CMD_REMOVE_START: u32 = 19;
+const CMD_REMOVE_DOWNLOADS: u32 = 20;
+const CMD_REMOVE_TRASH: u32 = 21;
+const CMD_UNPIN: u32 = 22;
+const CMD_RESTORE_DEFAULTS: u32 = 23;
+const CMD_CHANGE_ICON: u32 = 24;
+const CMD_RESET_ICON: u32 = 25;
 const CMD_WINDOW: u32 = 100;
 const MENU_WINDOWS: usize = 12;
 const MENU_TITLE_CHARS: usize = 60;
@@ -859,23 +866,28 @@ thread_local! {
 }
 
 fn explorer_id() -> String {
-    normalize_id(&format!(
-        "{}\\explorer.exe",
-        env::var("WINDIR").unwrap_or_default()
-    ))
+    muelle_shell::system::explorer_id()
 }
 
 /// Saved settings or, on first launch, the defaults with the apps pinned to
-/// the Windows taskbar.
+/// the Windows taskbar and the four default system shortcuts:
+/// Start Menu, File Explorer, Downloads, and Recycle Bin.
 fn load_config() -> Config {
     let path = muelle_config::default_path();
     match muelle_config::load(&path) {
         Ok(Some(config)) => config,
         Ok(None) => {
-            let pins = taskbar_pins();
+            let mut pins = taskbar_pins();
+            let explorer = explorer_id();
+            if !pins.contains(&explorer) {
+                pins.insert(0, explorer);
+            }
             let config = Config {
                 pinned: pins.clone(),
                 taskbar_pins: Some(pins),
+                show_start: true,
+                show_downloads: true,
+                show_recycle_bin: true,
                 ..Config::default()
             };
             match muelle_config::update(&path, |saved| Ok(saved.unwrap_or_else(|| config.clone())))
@@ -895,26 +907,17 @@ fn load_config() -> Config {
     }
 }
 
-/// The Explorer is always pinned, like Finder, on its own.
+/// Roster initialized directly from the user's saved configuration.
 fn roster_from(config: &Config) -> Roster {
-    let explorer = explorer_id();
-    let mut pinned = config.pinned.clone();
-    pinned.retain(|id| *id != explorer);
-    pinned.insert(0, explorer.clone());
     let groups = config
         .groups
         .iter()
         .map(|group| Group {
             id: group.id.clone(),
-            apps: group
-                .apps
-                .iter()
-                .filter(|id| **id != explorer)
-                .cloned()
-                .collect(),
+            apps: group.apps.clone(),
         })
         .collect();
-    Roster::new(pinned, config.recent.clone()).with_groups(groups)
+    Roster::new(config.pinned.clone(), config.recent.clone()).with_groups(groups)
 }
 
 fn save_settings(roster: &Roster, config: &Config) {
@@ -937,6 +940,12 @@ fn save_dock_config(roster: &Roster, config: &Config, toggle_hide: bool) -> Resu
             .collect();
         saved.recent = roster.recent().to_vec();
         saved.taskbar_pins.clone_from(&config.taskbar_pins);
+        saved.show_start = config.show_start;
+        saved.show_downloads = config.show_downloads;
+        saved.show_recycle_bin = config.show_recycle_bin;
+        saved.genie_duration_ms = config.genie_duration_ms;
+        saved.genie_speed = config.genie_speed;
+        saved.custom_icons = config.custom_icons.clone();
         if toggle_hide {
             saved.auto_hide = !saved.auto_hide;
         }
@@ -1038,7 +1047,9 @@ impl App {
                 None => icon(&app.id, Role::App, app.running),
             })
             .collect();
-        entries.insert(0, icon(START_ID, Role::Start, false));
+        if self.config.show_start {
+            entries.insert(0, icon(START_ID, Role::Start, false));
+        }
         if self.config.show_recents && !self.roster.recent().is_empty() {
             entries.push(separator());
             entries.extend(
@@ -1048,23 +1059,33 @@ impl App {
                     .map(|id| icon(id, Role::App, false)),
             );
         }
-        entries.push(separator());
-        // Unless "show minimized windows" is on, minimized windows hide in
-        // their app's icon instead of getting a thumbnail here.
-        if self.config.show_minimized {
-            entries.extend(
-                self.minimized
-                    .iter()
-                    .map(|&hwnd| icon(&window_id(hwnd), Role::Window, false)),
-            );
+        let has_right_items = self.config.show_minimized
+            || self.config.shortcuts_folder.is_some()
+            || (self.config.show_downloads && self.downloads.is_some())
+            || self.config.show_recycle_bin;
+        if has_right_items {
+            entries.push(separator());
+            // Unless "show minimized windows" is on, minimized windows hide in
+            // their app's icon instead of getting a thumbnail here.
+            if self.config.show_minimized {
+                entries.extend(
+                    self.minimized
+                        .iter()
+                        .map(|&hwnd| icon(&window_id(hwnd), Role::Window, false)),
+                );
+            }
+            if let Some(folder) = &self.config.shortcuts_folder {
+                entries.push(icon(folder, Role::Shortcuts, false));
+            }
+            if self.config.show_downloads {
+                if let Some(downloads) = &self.downloads {
+                    entries.push(icon(downloads, Role::Folder, false));
+                }
+            }
+            if self.config.show_recycle_bin {
+                entries.push(icon(recycle_bin::PARSING_NAME, Role::Trash, false));
+            }
         }
-        if let Some(folder) = &self.config.shortcuts_folder {
-            entries.push(icon(folder, Role::Shortcuts, false));
-        }
-        if let Some(downloads) = &self.downloads {
-            entries.push(icon(downloads, Role::Folder, false));
-        }
-        entries.push(icon(recycle_bin::PARSING_NAME, Role::Trash, false));
         entries
     }
 
@@ -1294,11 +1315,7 @@ impl App {
 
         let scale = monitor.scale;
         let max_scale = key.max_scale;
-        let mut metrics = Metrics {
-            icon: key.icon_size as f32,
-            ..Metrics::DEFAULT
-        }
-        .scaled(scale);
+        let mut metrics = Metrics::for_icon_size(key.icon_size as f32).scaled(scale);
         let theme = Theme::for_system(key.light, key.glass);
         let px = |logical: f32| (logical * scale).round();
         let screen = monitor.screen;
@@ -1880,7 +1897,7 @@ impl App {
                 snapshot,
                 slot,
                 screen,
-                self.config.genie_speed.seconds(),
+                self.config.genie_duration_seconds(),
                 self.position(),
             )
         });
@@ -1941,7 +1958,7 @@ impl App {
                 from,
                 frame,
                 screen,
-                self.config.genie_speed.seconds(),
+                self.config.genie_duration_seconds(),
                 self.position(),
             ) {
                 self.flights.push(flight);
@@ -2603,12 +2620,11 @@ impl App {
         self.place_windows()
     }
 
-    /// Only running or pinned apps, and groups, can be dragged; the Explorer,
-    /// Start, recent apps, Downloads, and the recycle bin stay in place.
+    /// Only running or pinned apps, and groups, can be dragged.
     fn is_draggable(&self, entry: &Entry) -> bool {
         matches!(entry.role, Role::App | Role::Group)
             && entry.id.as_ref().is_some_and(|id| {
-                *id != explorer_id() && (self.roster.is_pinned(id) || self.roster.is_running(id))
+                self.roster.is_pinned(id) || self.roster.is_running(id)
             })
     }
 
@@ -2721,7 +2737,6 @@ impl App {
             self.amount.value,
             &stage.magnifier,
         );
-        let explorer = explorer_id();
         let rise = stage.icon * (stage.magnifier.max_scale - 1.0);
         let in_dock = across >= -rise;
         if !group && in_dock {
@@ -2732,7 +2747,7 @@ impl App {
                 .find(|(entry, rect)| {
                     matches!(entry.role, Role::App | Role::Group)
                         && entry.id.as_ref().is_some_and(|other| {
-                            *other != id && *other != explorer && self.roster.is_pinned(other)
+                            *other != id && self.roster.is_pinned(other)
                         })
                         && group_drop_contains(rect, self.cursor, across)
                 })
@@ -2757,7 +2772,7 @@ impl App {
             if self.roster.is_pinned(other) {
                 if other != id {
                     pinned_end = rect.x + rect.width;
-                    if other != explorer && ahead && before.is_none() {
+                    if ahead && before.is_none() {
                         before = Some(other);
                     }
                 }
@@ -2854,7 +2869,6 @@ impl App {
         let Some(id) = self.incoming_pin.clone() else {
             return DropAction::Nothing;
         };
-        let explorer = explorer_id();
         let before = self
             .entries
             .iter()
@@ -2862,7 +2876,7 @@ impl App {
             .find(|(entry, rect)| {
                 matches!(entry.role, Role::App | Role::Group)
                     && entry.id.as_ref().is_some_and(|other| {
-                        *other != explorer && *other != id && self.roster.is_pinned(other)
+                        *other != id && self.roster.is_pinned(other)
                     })
                     && rect.x + rect.width / 2.0 > self.cursor
             })
@@ -3034,6 +3048,9 @@ impl App {
             self.roster.group_with(&drag.id, target);
         } else if drag.removing {
             self.roster.unpin(&drag.id);
+            if let Some(pins) = self.config.taskbar_pins.as_mut() {
+                pins.retain(|p| p != &drag.id);
+            }
         }
         save_settings(&self.roster, &self.config);
         self.refresh()?;
@@ -3537,6 +3554,8 @@ impl App {
                     MenuItem::action(CMD_TOGGLE_HIDING, hiding),
                     MenuItem::action(CMD_SHOW_DESKTOP, text().show_desktop),
                     MenuItem::Separator,
+                    MenuItem::action(CMD_RESTORE_DEFAULTS, text().restore_default_items),
+                    MenuItem::Separator,
                     MenuItem::action(CMD_TASK_MANAGER, text().task_manager),
                     MenuItem::action(CMD_TASKBAR_SETTINGS, text().taskbar_settings),
                     MenuItem::Separator,
@@ -3592,13 +3611,14 @@ impl App {
                     t.new_window
                 };
                 items.push(MenuItem::action(CMD_OPEN, open));
-                if id != explorer_id() {
-                    items.push(MenuItem::Action {
-                        command: CMD_TOGGLE_PIN,
-                        label: t.keep_in_dock.into(),
-                        checked: self.roster.is_pinned(id),
-                        enabled: true,
-                    });
+                items.push(MenuItem::Action {
+                    command: CMD_TOGGLE_PIN,
+                    label: t.keep_in_dock.into(),
+                    checked: self.roster.is_pinned(id),
+                    enabled: true,
+                });
+                if self.roster.is_pinned(id) {
+                    items.push(MenuItem::action(CMD_UNPIN, t.remove_from_dock));
                 }
                 // A recent app can be dismissed while recent apps stay on.
                 if windows.is_empty() && self.roster.recent().iter().any(|recent| recent == id) {
@@ -3607,6 +3627,10 @@ impl App {
                 if is_file {
                     items.push(MenuItem::action(CMD_RUN_AS_ADMIN, t.run_as_admin));
                     items.push(MenuItem::action(CMD_REVEAL, t.show_in_explorer));
+                }
+                items.push(MenuItem::action(CMD_CHANGE_ICON, t.change_icon));
+                if self.config.custom_icons.contains_key(id) {
+                    items.push(MenuItem::action(CMD_RESET_ICON, t.reset_icon));
                 }
                 if !windows.is_empty() {
                     items.push(MenuItem::Separator);
@@ -3626,7 +3650,11 @@ impl App {
                 items.push(MenuItem::Separator);
                 items.push(MenuItem::action(CMD_UNGROUP, t.ungroup));
             }
-            Role::Start => items.push(MenuItem::action(CMD_OPEN, t.open)),
+            Role::Start => {
+                items.push(MenuItem::action(CMD_OPEN, t.open));
+                items.push(MenuItem::Separator);
+                items.push(MenuItem::action(CMD_REMOVE_START, t.remove_from_dock));
+            }
             Role::Window => {
                 items.push(MenuItem::action(CMD_OPEN, t.open));
                 items.push(MenuItem::Separator);
@@ -3635,6 +3663,8 @@ impl App {
             Role::Folder => {
                 items.push(MenuItem::action(CMD_OPEN, t.open));
                 items.push(MenuItem::action(CMD_REVEAL, t.show_in_explorer));
+                items.push(MenuItem::Separator);
+                items.push(MenuItem::action(CMD_REMOVE_DOWNLOADS, t.remove_from_dock));
             }
             // The folder is chosen in Settings, so changing it opens them.
             Role::Shortcuts => {
@@ -3652,6 +3682,8 @@ impl App {
                     checked: false,
                     enabled: self.bin_full,
                 });
+                items.push(MenuItem::Separator);
+                items.push(MenuItem::action(CMD_REMOVE_TRASH, t.remove_from_dock));
             }
         }
         (items, end_task)
@@ -3669,6 +3701,10 @@ impl App {
                 CMD_QUIT_DOCK => Ok(Some(Outside::QuitDock)),
                 CMD_TOGGLE_HIDING => self.toggle_hiding().map(|()| None),
                 CMD_SHOW_DESKTOP => Ok(Some(Outside::ShowDesktop)),
+                CMD_RESTORE_DEFAULTS => {
+                    self.restore_default_taskbar_layout()?;
+                    Ok(None)
+                }
                 CMD_TASK_MANAGER => Ok(Some(Outside::Open("taskmgr.exe".into()))),
                 CMD_TASKBAR_SETTINGS => Ok(Some(Outside::Open("ms-settings:taskbar".into()))),
                 CMD_SETTINGS => Ok(Some(Outside::OpenSettings)),
@@ -3689,6 +3725,39 @@ impl App {
                 None
             }
             CMD_OPEN if role == Role::Start => Some(Outside::OpenStart),
+            CMD_REMOVE_START => {
+                self.config.show_start = false;
+                save_settings(&self.roster, &self.config);
+                self.refresh()?;
+                None
+            }
+            CMD_REMOVE_DOWNLOADS => {
+                self.config.show_downloads = false;
+                save_settings(&self.roster, &self.config);
+                self.refresh()?;
+                None
+            }
+            CMD_REMOVE_TRASH => {
+                self.config.show_recycle_bin = false;
+                save_settings(&self.roster, &self.config);
+                self.refresh()?;
+                None
+            }
+            CMD_UNPIN => {
+                let on_taskbar = self
+                    .config
+                    .taskbar_pins
+                    .as_ref()
+                    .is_some_and(|pins| pins.contains(&id));
+                self.roster.unpin(&id);
+                pins::forget_shortcut(&id);
+                if let Some(pins) = self.config.taskbar_pins.as_mut() {
+                    pins.retain(|p| p != &id);
+                }
+                save_settings(&self.roster, &self.config);
+                self.refresh()?;
+                (on_taskbar).then_some(Outside::UnpinFromTaskbar(id))
+            }
             CMD_OPEN if role == Role::Window => {
                 window_of(&id).and_then(|hwnd| self.activating(vec![hwnd]))
             }
@@ -3730,6 +3799,9 @@ impl App {
                 if unpinning {
                     self.roster.unpin(&id);
                     pins::forget_shortcut(&id);
+                    if let Some(pins) = self.config.taskbar_pins.as_mut() {
+                        pins.retain(|p| p != &id);
+                    }
                 } else {
                     self.roster.pin(&id);
                 }
@@ -3739,6 +3811,44 @@ impl App {
             }
             CMD_RUN_AS_ADMIN => Some(Outside::OpenAsAdmin(id)),
             CMD_REVEAL => Some(Outside::Reveal(id)),
+            CMD_CHANGE_ICON => {
+                let id = id.clone();
+                let dock_hwnd = self.window.0 as isize;
+                std::thread::spawn(move || {
+                    if let Some(path) = muelle_shell::folder::pick_icon_file(dock_hwnd, None) {
+                        let _ = muelle_config::update(&muelle_config::default_path(), |saved| {
+                            let mut saved = saved.unwrap_or_default();
+                            saved.custom_icons.insert(id, path);
+                            Ok(saved)
+                        });
+                        if let Some(&msg) = CONFIG_CHANGED.get() {
+                            unsafe {
+                                let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                                    Some(windows::Win32::Foundation::HWND(dock_hwnd as *mut _)),
+                                    msg,
+                                    windows::Win32::Foundation::WPARAM(0),
+                                    windows::Win32::Foundation::LPARAM(0),
+                                );
+                            }
+                        }
+                    }
+                });
+                None
+            }
+            CMD_RESET_ICON => {
+                let id_clone = id.clone();
+                self.config.custom_icons.remove(&id);
+                let _ = muelle_config::update(&muelle_config::default_path(), |saved| {
+                    let mut saved = saved.unwrap_or_default();
+                    saved.custom_icons.remove(&id_clone);
+                    Ok(saved)
+                });
+                self.assets.remove(&id);
+                self.icons.remove(&id);
+                self.stage = None;
+                self.refresh()?;
+                None
+            }
             CMD_QUIT_APP => {
                 launcher::close(&windows);
                 None
@@ -3754,6 +3864,21 @@ impl App {
         })
     }
 
+    /// Restores the four default shortcuts to the dock: Start Menu,
+    /// File Explorer, Downloads folder, and Recycle Bin.
+    fn restore_default_taskbar_layout(&mut self) -> Result<()> {
+        self.config.show_start = true;
+        let explorer = explorer_id();
+        if !self.roster.is_pinned(&explorer) {
+            self.roster
+                .pin_before(&explorer, self.roster.pinned().first().map(String::as_str));
+        }
+        self.config.show_downloads = true;
+        self.config.show_recycle_bin = true;
+        save_settings(&self.roster, &self.config);
+        self.refresh()
+    }
+
     /// The settings app saved a change: read it and apply what differs.
     fn reload_config(&mut self) -> Result<()> {
         self.close_preview();
@@ -3761,17 +3886,29 @@ impl App {
         let Ok(Some(saved)) = muelle_config::load(&muelle_config::default_path()) else {
             return Ok(());
         };
-        // Pinned and recent apps belong to the dock; the settings app only
-        // changes the rest.
+        let pinned_changed = saved.pinned != self.config.pinned;
+        let custom_icons_changed = saved.custom_icons != self.config.custom_icons;
+        // Pinned and recent apps belong to the dock unless changed externally
+        // (such as by Settings layout restoration).
         let config = Config {
-            pinned: self.config.pinned.clone(),
-            groups: self.config.groups.clone(),
+            pinned: if pinned_changed { saved.pinned.clone() } else { self.config.pinned.clone() },
+            groups: if pinned_changed { saved.groups.clone() } else { self.config.groups.clone() },
             recent: self.config.recent.clone(),
             taskbar_pins: self.config.taskbar_pins.clone(),
             ..saved
         };
-        if config == self.config {
+        if config == self.config && !pinned_changed && !custom_icons_changed {
             return Ok(());
+        }
+        if custom_icons_changed {
+            for id in saved.custom_icons.keys().chain(self.config.custom_icons.keys()) {
+                self.assets.remove(id);
+                self.icons.remove(id);
+            }
+            self.stage = None;
+        }
+        if pinned_changed {
+            self.roster = roster_from(&config);
         }
         self.stop_mascot();
         if config.language != self.config.language {

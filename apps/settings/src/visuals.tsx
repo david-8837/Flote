@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import type { DockPosition, GenieSpeed, IslandStyle } from "./config";
 
 const PATHS = {
@@ -41,7 +41,7 @@ export function DockPreview({ position, iconSize, wallpaper }: { position: DockP
     <span className="preview-topbar"><i /><i /><i /></span>
     <span className="preview-window"><i /><i /><i /></span>
     <span className="preview-dock" data-position={position}
-      style={{ "--mini-icon": `${6 + (iconSize - 32) / 16}px` } as CSSProperties}>{MINI_ICONS}</span>
+      style={{ "--mini-icon": `${Math.max(4, Math.round((5 + (iconSize - 20) * (5 / 76)) * 10) / 10)}px` } as CSSProperties}>{MINI_ICONS}</span>
   </span>;
 }
 
@@ -69,4 +69,182 @@ export function SpeedPreview({ speed }: { speed: GenieSpeed }) {
     {speed === "faster" ? <path d="M8 6H3m5 24H3" opacity=".25" /> : null}
     <rect x="88" y="34" width="16" height="10" rx="2" fill="var(--accent)" stroke="none" />
   </svg>;
+}
+
+function drawRoundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  if (typeof ctx.roundRect === "function") {
+    ctx.roundRect(x, y, w, h, r);
+  } else {
+    ctx.rect(x, y, w, h);
+  }
+}
+
+/** Smooth real-time canvas preview of the Genie minimize and restore effect. */
+export function GenieSpeedPreview({ durationMs }: { durationMs: number }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    let animId: number;
+    let stateStartTime = performance.now();
+    let phase: "open" | "minimizing" | "minimized" | "restoring" = "open";
+    const PAUSE_MS = 350;
+
+    const render = (now: number) => {
+      if (document.hidden) {
+        animId = requestAnimationFrame(render);
+        return;
+      }
+
+      const elapsed = now - stateStartTime;
+      let t = 0;
+
+      if (phase === "open") {
+        t = 0;
+        if (elapsed >= PAUSE_MS) {
+          phase = "minimizing";
+          stateStartTime = now;
+        }
+      } else if (phase === "minimizing") {
+        const progress = Math.min(1, elapsed / Math.max(1, durationMs));
+        t = progress;
+        if (progress >= 1) {
+          phase = "minimized";
+          stateStartTime = now;
+        }
+      } else if (phase === "minimized") {
+        t = 1;
+        if (elapsed >= PAUSE_MS) {
+          phase = "restoring";
+          stateStartTime = now;
+        }
+      } else if (phase === "restoring") {
+        const progress = Math.min(1, elapsed / Math.max(1, durationMs));
+        t = 1 - progress;
+        if (progress >= 1) {
+          phase = "open";
+          stateStartTime = now;
+        }
+      }
+
+      const dpr = window.devicePixelRatio || 1;
+      const cssWidth = canvas.clientWidth || 240;
+      const cssHeight = canvas.clientHeight || 96;
+
+      if (canvas.width !== cssWidth * dpr || canvas.height !== cssHeight * dpr) {
+        canvas.width = cssWidth * dpr;
+        canvas.height = cssHeight * dpr;
+      }
+
+      ctx.save();
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+      // Desktop mockup background
+      const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      ctx.fillStyle = isDark ? "rgba(255, 255, 255, 0.04)" : "rgba(0, 0, 0, 0.03)";
+      ctx.beginPath();
+      drawRoundRect(ctx, 0, 0, cssWidth, cssHeight, 8);
+      ctx.fill();
+
+      // Mini dock at bottom
+      const dockWidth = Math.min(180, cssWidth * 0.75);
+      const dockHeight = 16;
+      const dockX = (cssWidth - dockWidth) / 2;
+      const dockY = cssHeight - dockHeight - 6;
+
+      ctx.fillStyle = isDark ? "rgba(255, 255, 255, 0.12)" : "rgba(0, 0, 0, 0.08)";
+      ctx.beginPath();
+      drawRoundRect(ctx, dockX, dockY, dockWidth, dockHeight, 6);
+      ctx.fill();
+
+      // Slot target icon on dock
+      const slotX = dockX + dockWidth * 0.62;
+      const slotY = dockY + 2.5;
+      const slotWidth = 11;
+      const slotHeight = 11;
+
+      // Other dock icons
+      ctx.fillStyle = isDark ? "rgba(255, 255, 255, 0.3)" : "rgba(0, 0, 0, 0.2)";
+      for (let i = 0; i < 6; i++) {
+        const ix = dockX + 8 + i * 15;
+        if (Math.abs(ix - slotX) > 8) {
+          ctx.beginPath();
+          drawRoundRect(ctx, ix, dockY + 3, 10, 10, 2);
+          ctx.fill();
+        }
+      }
+
+      // Slot icon (active app icon)
+      ctx.fillStyle = "rgba(10, 108, 240, 0.85)";
+      ctx.beginPath();
+      drawRoundRect(ctx, slotX, slotY, slotWidth, slotHeight, 2.5);
+      ctx.fill();
+
+      // Window flying or resting open
+      if (t < 0.99) {
+        const winLeft = cssWidth * 0.22;
+        const winRight = cssWidth * 0.52;
+        const winTop = 8;
+        const winBottom = cssHeight * 0.58;
+        const winHeight = winBottom - winTop;
+
+        const count = 30;
+        const bendEnd = 0.5;
+        const slideStart = 0.15;
+
+        const smoothstep = (x: number) => {
+          const c = Math.max(0, Math.min(1, x));
+          return c * c * (3 - 2 * c);
+        };
+
+        const bend = smoothstep(t / bendEnd);
+        const slideT = Math.max(0, Math.min(1, (t - slideStart) / (1 - slideStart)));
+        const shift = slideT * slideT * Math.max(0, slotY + slotHeight - winTop);
+        const span = slotY - winTop;
+
+        const sides = (y: number) => {
+          const along = span > 0 ? Math.max(0, Math.min(1, (y - winTop) / span)) : 1;
+          const curve = ((1 - Math.cos(Math.PI * along)) / 2) * bend;
+          return [
+            winLeft + (slotX - winLeft) * curve,
+            winRight + (slotX + slotWidth - winRight) * curve,
+          ];
+        };
+
+        for (let i = 0; i < count; i++) {
+          const top = winTop + (i / count) * winHeight + shift;
+          if (top >= slotY + slotHeight) break;
+          const bottom = Math.min(winTop + ((i + 1) / count) * winHeight + shift, slotY + slotHeight);
+          const [left, right] = sides((top + bottom) / 2);
+          const stripW = Math.max(1, right - left);
+          const stripH = Math.max(0.6, bottom - top + 0.6);
+
+          // Top strips represent the titlebar
+          if (i < 4) {
+            ctx.fillStyle = isDark ? "rgba(90, 150, 240, 0.9)" : "rgba(10, 108, 240, 0.9)";
+          } else {
+            ctx.fillStyle = isDark ? "rgba(60, 65, 80, 0.85)" : "rgba(235, 240, 250, 0.85)";
+          }
+          ctx.fillRect(left, top, stripW, stripH);
+        }
+      }
+
+      ctx.restore();
+      animId = requestAnimationFrame(render);
+    };
+
+    animId = requestAnimationFrame(render);
+    return () => cancelAnimationFrame(animId);
+  }, [durationMs]);
+
+  return (
+    <div className="genie-preview-container">
+      <canvas ref={canvasRef} className="genie-preview-canvas" aria-hidden="true" />
+    </div>
+  );
 }

@@ -14,6 +14,7 @@ pub mod log;
 pub mod names;
 pub mod pins;
 pub mod power;
+pub mod pwa;
 pub mod recycle_bin;
 pub mod screen;
 pub mod status;

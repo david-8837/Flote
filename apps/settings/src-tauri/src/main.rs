@@ -46,6 +46,53 @@ async fn set_config(patch: serde_json::Map<String, serde_json::Value>) -> Result
     .map_err(|error| error.to_string())?
 }
 
+#[tauri::command]
+async fn set_explorer_pinned(pinned: bool) -> Result<Config, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = muelle_config::default_path();
+        let explorer = muelle_shell::system::explorer_id();
+        let config = muelle_config::update(&path, |saved| {
+            let mut config = saved.unwrap_or_default();
+            if pinned {
+                if !config.pinned.contains(&explorer) {
+                    config.pinned.insert(0, explorer.clone());
+                }
+            } else {
+                config.pinned.retain(|id| id != &explorer);
+            }
+            Ok(config)
+        })
+        .map_err(|error| error.to_string())?;
+        dock_link::notify_config_changed();
+        Ok(config)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn restore_default_taskbar_layout() -> Result<Config, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = muelle_config::default_path();
+        let explorer = muelle_shell::system::explorer_id();
+        let config = muelle_config::update(&path, |saved| {
+            let mut config = saved.unwrap_or_default();
+            config.show_start = true;
+            config.show_downloads = true;
+            config.show_recycle_bin = true;
+            if !config.pinned.contains(&explorer) {
+                config.pinned.insert(0, explorer.clone());
+            }
+            Ok(config)
+        })
+        .map_err(|error| error.to_string())?;
+        dock_link::notify_config_changed();
+        Ok(config)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 /// Windows' own animation setting, which the genie follows: off, the
 /// genie does not play, and the window says so.
 #[tauri::command]
@@ -82,6 +129,45 @@ async fn pick_folder(
     })
     .await
     .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn pick_icon_file(
+    window: tauri::WebviewWindow,
+    current: Option<String>,
+) -> Result<Option<String>, String> {
+    let owner = window
+        .hwnd()
+        .map(|hwnd| hwnd.0 as isize)
+        .unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || {
+        muelle_shell::folder::pick_icon_file(owner, current.as_deref())
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn set_custom_icon(
+    app_id: String,
+    icon_path: Option<String>,
+) -> Result<Config, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let config = muelle_config::update(&muelle_config::default_path(), |saved| {
+            let mut saved = saved.unwrap_or_default();
+            if let Some(path) = icon_path {
+                saved.custom_icons.insert(app_id, path);
+            } else {
+                saved.custom_icons.remove(&app_id);
+            }
+            Ok(saved)
+        })
+        .map_err(|e| e.to_string())?;
+        notify_config_changed();
+        Ok(config)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -327,11 +413,15 @@ fn main() {
             get_config,
             default_config,
             set_config,
+            set_explorer_pinned,
+            restore_default_taskbar_layout,
             get_autostart,
             set_autostart,
             windows_animations,
             open_animation_settings,
             pick_folder,
+            pick_icon_file,
+            set_custom_icon,
             check_update,
             install_update,
             open_release_notes,

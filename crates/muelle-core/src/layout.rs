@@ -25,6 +25,19 @@ impl Metrics {
         separator_margin: 7.0,
     };
 
+    /// Metrics scaled proportionally for a given base icon size.
+    #[must_use]
+    pub fn for_icon_size(icon_size: f32) -> Self {
+        let factor = (icon_size / Self::DEFAULT.icon).max(0.2);
+        Self {
+            icon: icon_size,
+            gap: (Self::DEFAULT.gap * factor).round().max(3.0),
+            padding: (Self::DEFAULT.padding * factor).round().max(3.0),
+            separator_width: Self::DEFAULT.separator_width,
+            separator_margin: (Self::DEFAULT.separator_margin * factor).round().max(2.0),
+        }
+    }
+
     #[must_use]
     pub fn scaled(self, scale: f32) -> Self {
         Self {

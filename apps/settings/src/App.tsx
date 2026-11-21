@@ -9,6 +9,8 @@ import {
   type IslandStyle,
   type Language,
   type UpdateInfo,
+  DEFAULT_GENIE_DURATION_MS,
+  GENIE_DURATION_MS_RANGE,
   ICON_SIZE,
   MAX_MAGNIFIED_SIZE,
   checkUpdate,
@@ -22,11 +24,15 @@ import {
   openReleaseNotes,
   openRepository,
   pickFolder,
+  pickIconFile,
+  restoreDefaultTaskbarLayout,
   saveConfig,
   setAutostart,
+  setCustomIcon,
+  setExplorerPinned,
 } from "./config";
 import { Card, Row, Segmented, Slider, SubRow, Toggle, VisualChoices } from "./controls";
-import { DockPreview, IslandPreview, SettingIcon, SpeedPreview } from "./visuals";
+import { DockPreview, IslandPreview, SettingIcon, GenieSpeedPreview } from "./visuals";
 import { type SectionId, SectionIcon } from "./icons";
 import { UpdateBanner } from "./UpdateBanner";
 import en from "./i18n/en.json";
@@ -229,12 +235,73 @@ export function App() {
 
   if (!config) return <div className="window" />;
   const t = textsFor(config.language);
-  const durationFormat = new Intl.NumberFormat(config.language === "auto" ? navigator.language : config.language);
+
+  const isExplorerPinned = config.pinned.some((p) => p.toLowerCase().endsWith("explorer.exe"));
+  const toggleExplorer = useCallback((pinned: boolean) => {
+    setExplorerPinned(pinned)
+      .then((saved) => setConfig(saved))
+      .catch(() => setFailed(true));
+  }, []);
+  const handleRestoreLayout = useCallback(() => {
+    restoreDefaultTaskbarLayout()
+      .then((saved) => setConfig(saved))
+      .catch(() => setFailed(true));
+  }, []);
+
+  const currentDurationMs =
+    config.genieDurationMs ??
+    (config.genieSpeed === "faster" ? 250 : config.genieSpeed === "fast" ? 350 : 500);
+
+  const sliderVal =
+    GENIE_DURATION_MS_RANGE.max + GENIE_DURATION_MS_RANGE.min - currentDurationMs;
+
+  const handleGenieSliderChange = (newSliderVal: number) => {
+    const duration = Math.round(
+      GENIE_DURATION_MS_RANGE.max + GENIE_DURATION_MS_RANGE.min - newSliderVal,
+    );
+    const speedEnum: GenieSpeed =
+      duration <= 275 ? "faster" : duration <= 400 ? "fast" : "normal";
+    update({ genieDurationMs: duration, genieSpeed: speedEnum });
+  };
+
+  const resetGenieSpeed = () => {
+    update({
+      genieDurationMs: DEFAULT_GENIE_DURATION_MS,
+      genieSpeed: "normal",
+    });
+  };
+
   const chooseFolder = () => {
     pickFolder(config.shortcutsFolder)
       .then((folder) => folder && update({ shortcutsFolder: folder }))
       .catch(() => setFailed(true));
   };
+
+  const handleChangeAppIcon = useCallback((appId: string) => {
+    pickIconFile()
+      .then((path) => {
+        if (path) {
+          setCustomIcon(appId, path).then(setConfig).catch(() => setFailed(true));
+        }
+      })
+      .catch(() => setFailed(true));
+  }, []);
+
+  const handleResetAppIcon = useCallback((appId: string) => {
+    setCustomIcon(appId, null).then(setConfig).catch(() => setFailed(true));
+  }, []);
+
+  const handlePickNewCustomIcon = useCallback(() => {
+    pickIconFile()
+      .then((path) => {
+        if (path) {
+          const pwa = config.pinned.find((p) => p.startsWith("pwa:")) || config.pinned[0];
+          const target = pwa || "custom_app";
+          setCustomIcon(target, path).then(setConfig).catch(() => setFailed(true));
+        }
+      })
+      .catch(() => setFailed(true));
+  }, [config.pinned]);
   const appWindow = getCurrentWindow();
   const waiting = pendingUpdate(updateState);
   // An update the user asked for keeps its banner even after "Later".
@@ -284,7 +351,7 @@ export function App() {
             <SettingIcon name="external" size={12} />
           </button>
           {projectError ? <p className="project-error" role="alert">{t.githubError}</p> : null}
-          <div className="sidebar-version"><span>Muelle</span><span>{version ? `v${version}` : ""}</span></div>
+          <div className="sidebar-version"><span>Flote</span><span>{version ? `v${version}` : ""}</span></div>
         </footer>
       </aside>
 
@@ -324,6 +391,9 @@ export function App() {
                     value={config.iconSize}
                     min={ICON_SIZE.min}
                     max={ICON_SIZE.max}
+                    step={1}
+                    unit=" px"
+                    displayValue={`${config.iconSize} px`}
                     onChange={(iconSize) => update({ iconSize })}
                   />
                 </Row>
@@ -381,6 +451,41 @@ export function App() {
                   />
                 </Row>
               </Card>
+              <Card title={t.defaultItemsTitle}>
+                <Row icon={<SettingIcon name="start" />} label={t.showStart} hint={t.showStartHint}>
+                  <Toggle
+                    label={t.showStart}
+                    checked={config.showStart}
+                    onChange={(showStart) => update({ showStart })}
+                  />
+                </Row>
+                <Row icon={<SettingIcon name="windows" />} label={t.showExplorer} hint={t.showExplorerHint}>
+                  <Toggle
+                    label={t.showExplorer}
+                    checked={isExplorerPinned}
+                    onChange={(pinned) => toggleExplorer(pinned)}
+                  />
+                </Row>
+                <Row icon={<SettingIcon name="folder" />} label={t.showDownloads} hint={t.showDownloadsHint}>
+                  <Toggle
+                    label={t.showDownloads}
+                    checked={config.showDownloads}
+                    onChange={(showDownloads) => update({ showDownloads })}
+                  />
+                </Row>
+                <Row icon={<SettingIcon name="reset" />} label={t.showRecycleBin} hint={t.showRecycleBinHint}>
+                  <Toggle
+                    label={t.showRecycleBin}
+                    checked={config.showRecycleBin}
+                    onChange={(showRecycleBin) => update({ showRecycleBin })}
+                  />
+                </Row>
+                <Row label={t.restoreDefaultItems} hint={t.restoreDefaultItemsHint}>
+                  <button type="button" className="push" onClick={handleRestoreLayout}>
+                    {t.restoreDefaultItemsButton}
+                  </button>
+                </Row>
+              </Card>
               <Card>
                 <Row icon={<SettingIcon name="folder" />} label={t.shortcutsFolder} hint={config.shortcutsFolder ?? t.shortcutsFolderHint}>
                   <div className="push-group">
@@ -395,6 +500,50 @@ export function App() {
                   </div>
                 </Row>
               </Card>
+              <Card title={t.webAppsTitle}>
+                <Row label={t.webAppsTitle} hint={t.webAppsHint} stacked>
+                  <div className="custom-icons-list">
+                    {Object.entries(config.customIcons ?? {}).map(([appId, iconPath]) => (
+                      <div key={appId} className="custom-icon-row">
+                        <span className="custom-icon-name" title={appId}>
+                          {appId.startsWith("pwa:") ? `PWA: ${appId.replace("pwa:", "")}` : appId.split(/[\\/]/).pop()}
+                        </span>
+                        <span className="custom-icon-path" title={iconPath}>
+                          {iconPath.split(/[\\/]/).pop()}
+                        </span>
+                        <div className="push-group">
+                          <button
+                            type="button"
+                            className="push"
+                            onClick={() => handleChangeAppIcon(appId)}
+                          >
+                            {t.changeIcon}
+                          </button>
+                          <button
+                            type="button"
+                            className="push"
+                            onClick={() => handleResetAppIcon(appId)}
+                          >
+                            {t.resetIcon}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {Object.keys(config.customIcons ?? {}).length === 0 ? (
+                      <p className="custom-icons-empty">{t.noCustomIcons}</p>
+                    ) : null}
+                    <div className="push-group" style={{ marginTop: "8px" }}>
+                      <button
+                        type="button"
+                        className="push"
+                        onClick={handlePickNewCustomIcon}
+                      >
+                        {t.addCustomIcon}
+                      </button>
+                    </div>
+                  </div>
+                </Row>
+              </Card>
             </>
           ) : section === "windows" ? (
             <>
@@ -406,18 +555,32 @@ export function App() {
                     onChange={(genie) => update({ genie })}
                   />
                 </Row>
-                <SubRow label={t.genieSpeed} open={config.genie} stacked>
-                  <VisualChoices<GenieSpeed>
-                    label={t.genieSpeed}
-                    hideLabel
-                    value={config.genieSpeed}
-                    options={[
-                      { value: "normal", label: t.genieSpeedNormal, preview: <SpeedPreview speed="normal" />, detail: `${durationFormat.format(0.5)} s` },
-                      { value: "fast", label: t.genieSpeedFast, preview: <SpeedPreview speed="fast" />, detail: `${durationFormat.format(0.35)} s` },
-                      { value: "faster", label: t.genieSpeedFaster, preview: <SpeedPreview speed="faster" />, detail: `${durationFormat.format(0.25)} s` },
-                    ]}
-                    onChange={(genieSpeed) => update({ genieSpeed })}
-                  />
+                <SubRow label={t.genieSpeed} hint={t.genieSpeedHint} open={config.genie} stacked>
+                  <GenieSpeedPreview durationMs={currentDurationMs} />
+                  <div className="genie-speed-controls">
+                    <div className="genie-slider-row">
+                      <span className="genie-speed-label">{t.genieSpeedSlow}</span>
+                      <Slider
+                        label={t.genieSpeed}
+                        min={GENIE_DURATION_MS_RANGE.min}
+                        max={GENIE_DURATION_MS_RANGE.max}
+                        step={25}
+                        value={sliderVal}
+                        displayValue={`${(currentDurationMs / 1000).toFixed(2)} s`}
+                        onChange={handleGenieSliderChange}
+                      />
+                      <span className="genie-speed-label">{t.genieSpeedFast}</span>
+                    </div>
+                    <div className="genie-speed-footer">
+                      <button
+                        type="button"
+                        className="push push-sm"
+                        onClick={resetGenieSpeed}
+                      >
+                        {t.genieSpeedReset}
+                      </button>
+                    </div>
+                  </div>
                 </SubRow>
                 <SubRow label={t.genieOff} hint={t.genieOffHint} open={config.genie && !animations}>
                   <button type="button" className="push" onClick={() => void openAnimationSettings()}>

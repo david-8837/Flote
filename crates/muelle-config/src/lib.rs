@@ -64,6 +64,19 @@ pub struct Config {
     pub genie: bool,
     /// How long the genie takes (issue #27). `Normal` is the original speed.
     pub genie_speed: GenieSpeed,
+    /// Custom duration of the genie animation in milliseconds (150ms to 1000ms).
+    /// When set, overrides `genie_speed`.
+    #[serde(alias = "genie_duration_ms")]
+    pub genie_duration_ms: Option<u32>,
+    /// Show the Windows Start Menu on the left side of the dock.
+    #[serde(alias = "show_start_menu")]
+    pub show_start: bool,
+    /// Show the Downloads folder on the right side of the dock.
+    #[serde(alias = "show_downloads")]
+    pub show_downloads: bool,
+    /// Show the Recycle Bin on the right side of the dock.
+    #[serde(alias = "show_trash")]
+    pub show_recycle_bin: bool,
     /// Minimized windows get a live thumbnail in the right section of the
     /// dock. Off by default: they go into their app's icon instead.
     pub show_minimized: bool,
@@ -110,6 +123,9 @@ pub struct Config {
     /// menu, with a submenu for each folder inside, like a Windows 10 taskbar
     /// toolbar. Only one: the user arranges the folder as they like.
     pub shortcuts_folder: Option<String>,
+    /// Custom icons chosen by the user for apps or PWAs (`app_id` -> file path).
+    #[serde(default)]
+    pub custom_icons: std::collections::HashMap<String, String>,
 }
 
 /// Pinned apps the user gathered in one dock icon by dropping one on
@@ -186,8 +202,10 @@ pub enum Language {
     Auto,
 }
 
-pub const ICON_SIZE_RANGE: (u32, u32) = (32, 96);
+pub const ICON_SIZE_RANGE: (u32, u32) = (20, 96);
 pub const MAX_MAGNIFIED_SIZE: u32 = 160;
+pub const GENIE_DURATION_MS_RANGE: (u32, u32) = (150, 1000);
+pub const DEFAULT_GENIE_DURATION_MS: u32 = 500;
 
 impl Config {
     /// Brings out-of-range values (a hand-edited file) back into range.
@@ -197,11 +215,31 @@ impl Config {
         self.magnified_size = self
             .magnified_size
             .clamp(self.icon_size, MAX_MAGNIFIED_SIZE);
+        self.genie_duration_ms = self
+            .genie_duration_ms
+            .map(|ms| ms.clamp(GENIE_DURATION_MS_RANGE.0, GENIE_DURATION_MS_RANGE.1));
         self.shortcuts_folder = self
             .shortcuts_folder
             .map(|folder| folder.trim().to_owned())
             .filter(|folder| !folder.is_empty());
         self
+    }
+
+    /// Flight duration of the genie in seconds.
+    #[must_use]
+    pub fn genie_duration_seconds(&self) -> f32 {
+        if let Some(ms) = self.genie_duration_ms {
+            (ms as f32) / 1000.0
+        } else {
+            self.genie_speed.seconds()
+        }
+    }
+
+    /// Flight duration in milliseconds.
+    #[must_use]
+    pub fn genie_duration_ms_or_default(&self) -> u32 {
+        self.genie_duration_ms
+            .unwrap_or_else(|| (self.genie_speed.seconds() * 1000.0).round() as u32)
     }
 
     /// Scale of the icon under the cursor (1.0 = no magnification).
@@ -230,6 +268,10 @@ impl Default for Config {
             magnified_size: 77,
             genie: true,
             genie_speed: GenieSpeed::Normal,
+            genie_duration_ms: None,
+            show_start: true,
+            show_downloads: true,
+            show_recycle_bin: true,
             show_minimized: false,
             menu_bar: true,
             menu_bar_auto_hide: false,
@@ -250,24 +292,36 @@ impl Default for Config {
             auto_update: true,
             language: Language::Auto,
             shortcuts_folder: None,
+            custom_icons: std::collections::HashMap::new(),
         }
     }
 }
 
-/// Moves the settings folder from before the app was renamed to Muelle.
+/// Moves the settings folder from before the app was renamed to Flote.
 pub fn migrate_legacy_folder() {
     let roaming = PathBuf::from(env::var_os("APPDATA").unwrap_or_default());
-    let (old, new) = (roaming.join("WinDock"), roaming.join("Muelle"));
+    let (old, new) = (roaming.join("WinDock"), roaming.join("Flote"));
     if old.is_dir() && !new.exists() {
         let _ = fs::rename(old, new);
+    }
+    let (muelle, flote) = (roaming.join("Muelle"), roaming.join("Flote"));
+    if muelle.is_dir() && !flote.exists() {
+        let _ = fs::rename(muelle, flote);
     }
 }
 
 #[must_use]
 pub fn default_path() -> PathBuf {
-    PathBuf::from(env::var_os("APPDATA").unwrap_or_default())
-        .join("Muelle")
-        .join("config.json")
+    let roaming = PathBuf::from(env::var_os("APPDATA").unwrap_or_default());
+    let flote = roaming.join("Flote").join("config.json");
+    if flote.exists() {
+        return flote;
+    }
+    let muelle = roaming.join("Muelle").join("config.json");
+    if muelle.exists() {
+        return muelle;
+    }
+    flote
 }
 
 /// Reads the configuration. Returns `Ok(None)` if the file does not exist yet.
@@ -671,5 +725,37 @@ mod tests {
         fs::write(&path, r#"{"version":1,"pinned":["a"],"auto_hide":true}"#).ok();
         let loaded = load(&path).ok().flatten();
         assert_eq!(loaded.map(|config| config.auto_hide), Some(true));
+    }
+
+    #[test]
+    fn default_taskbar_items_should_be_enabled_by_default() {
+        let config = Config::default();
+        assert!(config.show_start);
+        assert!(config.show_downloads);
+        assert!(config.show_recycle_bin);
+    }
+
+    #[test]
+    fn legacy_config_without_taskbar_items_defaults_to_true() {
+        let json = r#"{"version":1,"pinned":["app1"]}"#;
+        let config: Config = serde_json::from_str(json).unwrap_or_default();
+        assert!(config.show_start);
+        assert!(config.show_downloads);
+        assert!(config.show_recycle_bin);
+        assert_eq!(config.genie_duration_seconds(), 0.5);
+    }
+
+    #[test]
+    fn custom_genie_duration_overrides_preset_speed() {
+        let json = r#"{"genieSpeed":"normal","genieDurationMs":250}"#;
+        let config: Config = serde_json::from_str(json).unwrap_or_default();
+        assert_eq!(config.genie_duration_ms, Some(250));
+        assert_eq!(config.genie_duration_seconds(), 0.25);
+
+        // Clamping check
+        let json_too_fast = r#"{"genieDurationMs":50}"#;
+        let config_fast: Config = serde_json::from_str(json_too_fast).unwrap_or_default().sanitized();
+        assert_eq!(config_fast.genie_duration_ms, Some(150));
+        assert_eq!(config_fast.genie_duration_seconds(), 0.15);
     }
 }
