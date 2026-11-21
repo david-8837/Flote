@@ -163,7 +163,7 @@ async fn set_custom_icon(
             Ok(saved)
         })
         .map_err(|e| e.to_string())?;
-        notify_config_changed();
+        dock_link::notify_config_changed();
         Ok(config)
     })
     .await
