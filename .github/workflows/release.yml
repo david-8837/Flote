@@ -251,4 +251,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create $env:GITHUB_REF_NAME (Get-ChildItem upload).FullName `
-            --clobber --notes-file notes.md --title "Flote $env:GITHUB_REF_NAME"
+            --notes-file notes.md --title "Flote $env:GITHUB_REF_NAME"
