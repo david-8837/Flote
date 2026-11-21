@@ -3,13 +3,13 @@ PackageIdentifier: CrafterStation.Muelle
 PackageVersion: '{{VERSION}}'
 PackageLocale: en-US
 Publisher: Muelle
-PublisherUrl: https://github.com/crafter-station
-PublisherSupportUrl: https://github.com/crafter-station/Muelle/issues
+PublisherUrl: https://github.com/david-8837
+PublisherSupportUrl: https://github.com/david-8837/Flote/issues
 PrivacyUrl: https://muelle.crafter.run/privacy
 PackageName: Muelle
 PackageUrl: https://muelle.crafter.run
 License: MIT
-LicenseUrl: https://github.com/crafter-station/Muelle/blob/main/LICENSE
+LicenseUrl: https://github.com/david-8837/Flote/blob/main/LICENSE
 ShortDescription: A macOS-style dock and menu bar for Windows 10 and 11.
 Description: Muelle replaces the Windows taskbar with a customizable dock, window previews and animations, and an optional menu bar. Quitting or uninstalling restores the Windows taskbar.
 Moniker: muelle
@@ -18,6 +18,6 @@ Tags:
   - taskbar
   - macos
   - launcher
-ReleaseNotesUrl: https://github.com/crafter-station/Muelle/releases/tag/v{{VERSION}}
+ReleaseNotesUrl: https://github.com/david-8837/Flote/releases/tag/v{{VERSION}}
 ManifestType: defaultLocale
 ManifestVersion: 1.10.0

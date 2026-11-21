@@ -5,9 +5,9 @@
     "targets": [
       "nsis"
     ],
-    "publisher": "Muelle",
-    "homepage": "https://github.com/crafter-station/Muelle",
-    "shortDescription": "Dock estilo macOS para Windows",
+    "publisher": "Flote",
+    "homepage": "https://github.com/david-8837/Flote",
+    "shortDescription": "Floating customizable taskbar for Windows",
     "category": "Utility",
     "externalBin": [
       "binaries/muelle"

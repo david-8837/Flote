@@ -7,7 +7,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-$repo = 'crafter-station/Muelle'
+$repo = 'david-8837/Flote'
 $id = 'CrafterStation.Muelle'
 $versionPattern = '(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)'
 if ($Tag -and $Tag -cnotmatch "\Av?$versionPattern\z") {

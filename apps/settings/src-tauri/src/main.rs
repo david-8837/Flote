@@ -240,7 +240,7 @@ struct Progress {
     total: Option<u64>,
 }
 
-const RELEASES: &str = "https://github.com/crafter-station/Muelle/releases/";
+const RELEASES: &str = "https://github.com/david-8837/Flote/releases/";
 
 /// The update manifest is not signed (only the installer is), so the only
 /// link it may open is a release page of this repository.
@@ -260,7 +260,7 @@ fn open_release_notes(url: String) -> Result<(), String> {
 #[tauri::command]
 async fn open_repository() -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(|| {
-        launcher::open("https://github.com/crafter-station/Muelle")
+        launcher::open("https://github.com/david-8837/Flote")
             .map_err(|error| error.to_string())
     })
     .await

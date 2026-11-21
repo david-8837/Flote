@@ -211,8 +211,10 @@ jobs:
         shell: pwsh
         run: |
           $nsis = 'target/release/bundle/nsis'
-          $setup = "Muelle_${env:VERSION}_x64-setup.exe"
-          $signature = Get-Content "$nsis/$setup.sig" -Raw
+          $setupExe = (Get-ChildItem "$nsis/*-setup.exe" | Where-Object { $_.Name -notlike '*.sig' } | Select-Object -First 1).Name
+          if (-not $setupExe) { $setupExe = "Flote_${env:VERSION}_x64-setup.exe" }
+          $setup = $setupExe
+          $signature = if (Test-Path "$nsis/$setup.sig") { Get-Content "$nsis/$setup.sig" -Raw } else { '' }
           $repo = "https://github.com/$env:GITHUB_REPOSITORY"
           $manifest = [ordered]@{
             version   = $env:VERSION
@@ -228,8 +230,8 @@ jobs:
           New-Item -ItemType Directory -Force upload | Out-Null
           $manifest | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8NoBOM upload/latest.json
           Copy-Item "$nsis/$setup" upload/
-          Copy-Item "$nsis/$setup.sig" upload/
-          Copy-Item "$nsis/$setup" upload/Muelle-Setup.exe
+          if (Test-Path "$nsis/$setup.sig") { Copy-Item "$nsis/$setup.sig" upload/ }
+          Copy-Item "$nsis/$setup" upload/Flote-Setup.exe
 
           # The release text is this version's section of CHANGELOG.md (English
           # and Spanish), between its heading and the next one.
@@ -248,4 +250,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create $env:GITHUB_REF_NAME (Get-ChildItem upload).FullName `
-            --draft --notes-file notes.md --title "Muelle $env:GITHUB_REF_NAME"
+            --draft --notes-file notes.md --title "Flote $env:GITHUB_REF_NAME"

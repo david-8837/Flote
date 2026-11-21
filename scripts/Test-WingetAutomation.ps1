@@ -29,7 +29,7 @@ $state.fixture = [pscustomobject]@{
 function Invoke-RestMethod {
     param($Uri, $Headers, $TimeoutSec)
     $state.apiCalls++
-    if ($Uri -like 'https://api.github.com/repos/crafter-station/Muelle/releases/*') { return $state.fixture }
+    if ($Uri -like 'https://api.github.com/repos/*/releases/*') { return $state.fixture }
     if ($Uri -like 'https://api.github.com/repos/microsoft/winget-pkgs/contents/*') { return $state.catalog }
     if ($Uri -like 'https://api.github.com/search/issues?*') { return @{ items = $state.openPrs } }
     throw "Unexpected test API call: $Uri"

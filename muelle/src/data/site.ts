@@ -1,19 +1,19 @@
 export const site = {
-  name: "Muelle",
-  tagline: "The macOS Dock, made for Windows.",
+  name: "Flote",
+  tagline: "The floating dock, made for Windows.",
   description:
     "Free, open-source macOS-style dock for Windows 10 and 11. Genie animations, window previews, AI usage and optional accessory battery indicators.",
-  url: "https://muelle.crafter.run",
+  url: "https://github.com/david-8837/Flote",
   ogImage: "/og-image.png",
   ogImageWidth: 1200,
   ogImageHeight: 630,
-  twitterHandle: "@CrisOliveraDev",
+  twitterHandle: "",
   locale: "en_US",
-  repository: "https://github.com/crafter-station/Muelle",
-  releases: "https://github.com/crafter-station/Muelle/releases",
-  download: "https://github.com/crafter-station/Muelle/releases/latest/download/Muelle-Setup.exe",
-  issues: "https://github.com/crafter-station/Muelle/issues",
-  version: "0.1.18",
+  repository: "https://github.com/david-8837/Flote",
+  releases: "https://github.com/david-8837/Flote/releases",
+  download: "https://github.com/david-8837/Flote/releases/latest/download/Flote-Setup.exe",
+  issues: "https://github.com/david-8837/Flote/issues",
+  version: "0.1.19",
   license: "MIT",
 } as const;
 
@@ -36,7 +36,7 @@ export const organization = {
   name: "Crafter Station",
   id: "https://crafter.run/#organization",
   url: "https://crafter.run",
-  github: "https://github.com/crafter-station",
+  github: "https://github.com/david-8837",
   products: "https://crafter.run/en/products",
   description: "The open source community of builders in Peru and LATAM.",
 } as const;

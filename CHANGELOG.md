@@ -8,6 +8,26 @@ copia la sección de la versión que se publica a la release de GitHub.
 
 ## [Unreleased]
 
+## [0.1.19]
+
+### English
+
+- Flote Rebranding & Modern App Icon: Renamed the application from Muelle to Flote, refreshed application branding, and installed modern glowing dark-blue app icon assets across all system resolutions.
+- Genie Animation Speed Control: Added a customizable animation speed slider in Settings with a real-time S-curve canvas preview and fine-grained adjustment (150 ms to 1000 ms), dynamically applied to window flight transitions.
+- Default Taskbar Items & Unpin/Restore Control: First launch automatically pins the Start Menu, File Explorer, Downloads folder, and Recycle Bin; users can remove/unpin any of them with full persistence or restore the original layout at any time from Settings.
+- Extended Taskbar Size Customization: Extended minimum dock size down to 20 px with proportional scaling across icons, padding, margins, and bar height, with fine 1 px slider increments.
+- Support for Installed Web Apps (PWAs) & Custom Icons: Chromium web apps (Chrome, Edge, Brave) running in standalone windows are recognized as independent taskbar items; users can assign custom icons (.ico, .png) or reset them via context menu and Settings.
+- Auto-Hide Reveal Delay & Sensitivity: Added a hover delay slider (0 ms instant to 400 ms) in Settings under auto-hide to prevent accidental dock popups while gaming or clicking buttons near the screen edge.
+
+### Español
+
+- Cambio de marca a Flote y nuevo icono: Se cambió el nombre de la aplicación de Muelle a Flote, se actualizó la marca y se instaló el nuevo icono estilizado en todas las resoluciones del sistema.
+- Control de velocidad del efecto genio: Se añadió un control deslizante de velocidad de animación en Configuración con vista previa en tiempo real y ajuste preciso (150 ms a 1000 ms), aplicado directamente a las transiciones de ventanas.
+- Elementos predeterminados del dock y desanclado/restauración: En el primer inicio se anclan automáticamente el Menú Inicio, el Explorador de archivos, Descargas y la Papelera de reciclaje; los usuarios pueden desanclarlos libremente o restaurar la distribución original desde Configuración.
+- Personalización ampliada del tamaño del dock: Se redujo el tamaño mínimo del dock a 20 px con escalado proporcional de iconos, espaciado, márgenes y altura, con pasos finos de 1 px.
+- Compatibilidad con aplicaciones web instaladas (PWA) e iconos personalizados: Las aplicaciones web de Chromium (Chrome, Edge, Brave) en ventanas independientes se detectan como elementos independientes del dock; se permite asignar iconos personalizados (.ico, .png) o restablecerlos desde el menú contextual y Configuración.
+- Retardo de aparición y sensibilidad al ocultar automáticamente: Se agregó un deslizador de retardo de paso del ratón (0 ms instantáneo a 400 ms) en Configuración para evitar aperturas accidentales mientras se juega o se hace clic cerca del borde de la pantalla.
+
 ## [0.1.18]
 
 ### English

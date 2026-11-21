@@ -48,9 +48,9 @@ dibujar su animación; las devuelve al cerrarse.
 
 ## Instalar
 
-**[Descargar Muelle-Setup.exe](https://github.com/crafter-station/Muelle/releases/latest/download/Muelle-Setup.exe)**
+**[Descargar Flote-Setup.exe](https://github.com/david-8837/Flote/releases/latest/download/Flote-Setup.exe)**
 (Windows 10 versión 1903 o posterior, o Windows 11; 64 bits) o elige una versión en
-[Releases](https://github.com/crafter-station/Muelle/releases).
+[Releases](https://github.com/david-8837/Flote/releases).
 
 1. Ejecuta `Muelle-Setup.exe`. Se instala solo para tu usuario: sin permisos de
    administrador, sin asistente, en unos dos segundos.
