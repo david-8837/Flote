@@ -159,6 +159,10 @@ impl Visuals {
     pub fn retain(&mut self, mut needed: impl FnMut(&str) -> bool) {
         self.ready.retain(|request, _| needed(&request.id));
     }
+
+    pub fn remove(&mut self, id: &str) {
+        self.ready.retain(|request, _| request.id != id);
+    }
 }
 
 impl Drop for Visuals {

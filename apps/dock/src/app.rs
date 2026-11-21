@@ -868,10 +868,6 @@ thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
 }
 
-fn explorer_id() -> String {
-    muelle_shell::system::explorer_id()
-}
-
 /// Saved settings or, on first launch, the defaults with the apps pinned to
 /// the Windows taskbar and the four default system shortcuts:
 /// Start Menu, File Explorer, Downloads, and Recycle Bin.
@@ -3874,7 +3870,7 @@ impl App {
             CMD_REVEAL => Some(Outside::Reveal(id)),
             CMD_CHANGE_ICON => {
                 let id = id.clone();
-                let dock_hwnd = self.window.0 as isize;
+                let dock_hwnd = self.input.0 as isize;
                 std::thread::spawn(move || {
                     if let Some(path) = muelle_shell::folder::pick_icon_file(dock_hwnd, None) {
                         let _ = muelle_config::update(&muelle_config::default_path(), |saved| {
@@ -3931,8 +3927,9 @@ impl App {
         self.config.show_start = true;
         let explorer = explorer_id();
         if !self.roster.is_pinned(&explorer) {
+            let first = self.roster.pinned().first().cloned();
             self.roster
-                .pin_before(&explorer, self.roster.pinned().first().map(String::as_str));
+                .pin_before(&explorer, first.as_deref());
         }
         self.config.show_downloads = true;
         self.config.show_recycle_bin = true;
