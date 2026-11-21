@@ -12,6 +12,7 @@ use windows::{
     core::{PCWSTR, w},
 };
 
+const FLOTE_KEY: PCWSTR = w!(r"Software\Flote");
 const MUELLE_KEY: PCWSTR = w!(r"Software\Muelle");
 const LAST_CHECK: PCWSTR = w!("LastUpdateCheck");
 
@@ -38,7 +39,7 @@ pub fn mark_checked() {
     unsafe {
         if RegCreateKeyExW(
             HKEY_CURRENT_USER,
-            MUELLE_KEY,
+            FLOTE_KEY,
             None,
             None,
             REG_OPTION_NON_VOLATILE,
@@ -60,6 +61,20 @@ fn last_check() -> Option<u64> {
     let mut value = 0u64;
     let mut size = size_of::<u64>() as u32;
     // SAFETY: `value` and `size` describe a valid 8-byte buffer.
+    let res = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            FLOTE_KEY,
+            LAST_CHECK,
+            RRF_RT_REG_QWORD,
+            None,
+            Some((&raw mut value).cast()),
+            Some(&mut size),
+        )
+    };
+    if res.is_ok() {
+        return Some(value);
+    }
     unsafe {
         RegGetValueW(
             HKEY_CURRENT_USER,

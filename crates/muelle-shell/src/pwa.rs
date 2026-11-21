@@ -124,6 +124,7 @@ pub fn find_pwa_shortcut(pwa_id: &str) -> Option<PathBuf> {
         search_dirs.push(start_programs.join(r"Brave Software\Brave-Browser Apps"));
         search_dirs.push(start_programs);
         search_dirs.push(appdata.join(r"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"));
+        search_dirs.push(appdata.join(r"Flote\Pins"));
         search_dirs.push(appdata.join(r"Muelle\Pins"));
     }
     if let Some(ref local) = localappdata {
@@ -232,8 +233,13 @@ pub fn pwa_id_from_shortcut(link: &Path, target: &str, arguments: &str) -> Optio
 /// Looks up if the user configured a custom icon for `app_id` in `config.json`.
 #[must_use]
 pub fn custom_icon_path(app_id: &str) -> Option<String> {
-    let appdata = env::var_os("APPDATA")?;
-    let config_path = PathBuf::from(appdata).join(r"Muelle\config.json");
+    let appdata = PathBuf::from(env::var_os("APPDATA")?);
+    let flote_path = appdata.join(r"Flote\config.json");
+    let config_path = if flote_path.exists() {
+        flote_path
+    } else {
+        appdata.join(r"Muelle\config.json")
+    };
     let content = fs::read_to_string(config_path).ok()?;
     let value: serde_json::Value = serde_json::from_str(&content).ok()?;
     let custom_icons = value.get("customIcons")?.as_object()?;

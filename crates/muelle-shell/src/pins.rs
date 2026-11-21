@@ -412,11 +412,20 @@ pub fn kept_shortcut_for(id: &str) -> Option<String> {
         .map(|link| link.to_string_lossy().into_owned())
 }
 
-/// The folder where Muelle keeps its own copy of shortcuts pinned from
+/// The folder where Flote keeps its own copy of shortcuts pinned from
 /// elsewhere (the desktop, Downloads), as the taskbar keeps `User Pinned`:
 /// the pin keeps working if the original is moved or deleted.
 fn kept_folder() -> Option<PathBuf> {
-    Some(PathBuf::from(env::var_os("APPDATA")?).join("Muelle\\Pins"))
+    let appdata = PathBuf::from(env::var_os("APPDATA")?);
+    let flote = appdata.join("Flote\\Pins");
+    if flote.exists() {
+        return Some(flote);
+    }
+    let muelle = appdata.join("Muelle\\Pins");
+    if muelle.exists() {
+        return Some(muelle);
+    }
+    Some(flote)
 }
 
 fn taskbar_folder() -> Option<PathBuf> {

@@ -55,10 +55,13 @@
   ${If} $UpdateMode <> 1
     SetShellVarContext current
     ; The icon cache is always disposable.
+    RmDir /r "$LOCALAPPDATA\Flote"
     RmDir /r "$LOCALAPPDATA\Muelle"
-    ; Where Muelle remembers that it starts with Windows.
+    ; Where Flote remembers that it starts with Windows.
+    DeleteRegKey HKCU "Software\Flote"
     DeleteRegKey HKCU "Software\Muelle"
     ${If} $DeleteAppDataCheckboxState = 1
+      RmDir /r "$APPDATA\Flote"
       RmDir /r "$APPDATA\Muelle"
     ${EndIf}
   ${EndIf}

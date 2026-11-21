@@ -1,15 +1,15 @@
 <div align="center">
 
-<img width="50%" alt="Muelle" src="https://github.com/user-attachments/assets/8c715a53-a0df-4780-9dd4-09ce3ccd9043" />
+<img width="50%" alt="Flote" src="assets/brand/flote-1024.png" />
 
-  **Un dock ligero, inspirado en macOS, para Windows 10 y 11.**
+  **Un dock ligero y flotante, inspirado en macOS, para Windows 10 y 11.**
 
   Ampliación suave, miniaturas de ventanas en vivo y un efecto genio opcional al minimizar.
 
   [English](README.md) · **Español** · [Français](README.fr.md)
 </div>
 
-Muelle sustituye la barra de tareas de Windows por un dock personalizable y una
+Flote sustituye la barra de tareas de Windows por un dock personalizable y una
 barra superior opcional al estilo de macOS. Está hecho para Windows 10 y 11 y sigue
 en desarrollo activo.
 
@@ -42,7 +42,7 @@ en desarrollo activo.
 - Un proceso guardián devuelve la barra de tareas de Windows si el dock se cierra de forma inesperada.
 
 El efecto genio está **activado por defecto** y se puede desactivar en Ajustes →
-Ventanas. Mientras está activo, Muelle
+Ventanas. Mientras está activo, Flote
 desactiva las transiciones de Windows en las ventanas que sigue, para poder
 dibujar su animación; las devuelve al cerrarse.
 
@@ -52,20 +52,19 @@ dibujar su animación; las devuelve al cerrarse.
 (Windows 10 versión 1903 o posterior, o Windows 11; 64 bits) o elige una versión en
 [Releases](https://github.com/david-8837/Flote/releases).
 
-1. Ejecuta `Muelle-Setup.exe`. Se instala solo para tu usuario: sin permisos de
+1. Ejecuta `Flote-Setup.exe`. Se instala solo para tu usuario: sin permisos de
    administrador, sin asistente, en unos dos segundos.
-2. Muelle es nuevo, así que SmartScreen puede no reconocerlo todavía y decir que
-   protegió tu PC. Elige **Más información → Ejecutar de todas formas**. Ver la
-   [política de firma de código](https://muelle.crafter.run/code-signing-policy).
-3. Aparece el dock y se oculta la barra de tareas de Windows. Desde entonces Muelle
+2. Flote es nuevo, así que SmartScreen puede no reconocerlo todavía y decir que
+   protegió tu PC. Elige **Más información → Ejecutar de todas formas**.
+3. Aparece el dock y se oculta la barra de tareas de Windows. Desde entonces Flote
    se abre al iniciar Windows; puedes desactivarlo en Ajustes → Sistema.
 
-Abre **Muelle** desde el menú Inicio (o clic derecho en el dock → *Ajustes de
-Muelle…*) para cambiar el dock. Ajustes también busca actualizaciones y las instala.
+Abre **Flote** desde el menú Inicio (o clic derecho en el dock → *Ajustes de
+Flote…*) para cambiar el dock. Ajustes también busca actualizaciones y las instala.
 
-**Recuperar la barra de tareas:** clic derecho en el dock → *Salir de Muelle*.
+**Recuperar la barra de tareas:** clic derecho en el dock → *Salir de Flote*.
 Para quitarlo del todo: Configuración de Windows → Aplicaciones → Aplicaciones
-instaladas → Muelle → Desinstalar; la barra vuelve y no queda nada en marcha.
+instaladas → Flote → Desinstalar; la barra vuelve y no queda nada en marcha.
 
 ## Probarlo desde el código
 
@@ -86,7 +85,7 @@ cargo run -p muelle
 ```
 
 El dock oculta la barra de tareas mientras está en marcha. Pulsa **Ctrl+C** en la
-terminal para salir; Muelle debería devolver la barra solo. Para devolverla a mano:
+terminal para salir; Flote debería devolver la barra solo. Para devolverla a mano:
 
 ```powershell
 cargo run -p muelle -- --restore
@@ -135,21 +134,21 @@ pnpm build
 
 ## Privacidad
 
-Muelle no recoge datos, no tiene telemetría y nunca envía nada al proyecto. Hace
+Flote no recoge datos, no tiene telemetría y nunca envía nada al proyecto. Hace
 dos tipos de conexión de red, ambas opcionales:
 
 - **Actualizaciones:** Ajustes pregunta a GitHub Releases si hay una versión
   nueva al abrirse y, una vez al día, un par de minutos después de encender el
-  ordenador, Muelle hace lo mismo en segundo plano e instala lo que encuentre
+  ordenador, Flote hace lo mismo en segundo plano e instala lo que encuentre
   (el dock en sí nunca usa la red). La instalación se desactiva en Ajustes →
   Sistema → *Instalar actualizaciones automáticamente*, y todo con *Buscar
   actualizaciones automáticamente*.
 - **Uso de proveedores de IA:** mientras un cliente compatible está abierto,
-  Muelle reutiliza su sesión local para consultar los límites disponibles de
+  Flote reutiliza su sesión local para consultar los límites disponibles de
   su proveedor cada cinco minutos mientras está visible, o al pulsar Actualizar.
   Gemini CLI y Antigravity pueden mostrar por separado las cuotas de Gemini Pro
   y Flash; Antigravity se consulta mediante su servicio local. Las credenciales
-  permanecen en memoria; Muelle no las guarda. Se desactiva en Ajustes → Barra
+  permanecen en memoria; Flote no las guarda. Se desactiva en Ajustes → Barra
   superior → *Mostrar uso de proveedores de IA*.
 
 Detalles: [muelle.crafter.run/privacy](https://muelle.crafter.run/privacy).

@@ -1,10 +1,10 @@
 <div align="center">
 
-<img width="50%" alt="Muelle" src="https://github.com/user-attachments/assets/8c715a53-a0df-4780-9dd4-09ce3ccd9043" />
+<img width="50%" alt="Flote" src="assets/brand/flote-1024.png" />
 
-  **Un dock léger, inspiré de macOS, pour Windows 10 et 11.**
+  **Un dock léger et flottant, inspiré de macOS, pour Windows 10 et 11.**
 
-  Muelle remplace la barre des tâches de Windows par un dock personnalisable et
+  Flote remplace la barre des tâches de Windows par un dock personnalisable et
   une barre de menus facultative à la manière de macOS.
 
   [English](README.md) · [Español](README.es.md) · **Français**
@@ -61,10 +61,10 @@ Agrandissement fluide, aperçus des fenêtres en direct et effet génie facultat
   dock se ferme de façon inattendue.
 
 L'effet génie est **activé par défaut** et se désactive dans Réglages →
-Fenêtres. Tant qu'il est activé, Muelle désactive temporairement les
+Fenêtres. Tant qu'il est activé, Flote désactive temporairement les
 transitions de Windows pour les fenêtres qu'il suit, afin de pouvoir jouer son
 animation de réduction ; ces transitions sont rétablies à la fermeture de
-Muelle.
+Flote.
 
 ## Installer
 
@@ -72,13 +72,12 @@ Muelle.
 (Windows 10 version 1903 ou ultérieure, ou Windows 11 ; 64 bits) ou choisissez
 une version dans les [Releases](https://github.com/david-8837/Flote/releases).
 
-1. Lancez `Muelle-Setup.exe`. Il s'installe pour votre seul compte : sans
+1. Lancez `Flote-Setup.exe`. Il s'installe pour votre seul compte : sans
    droits d'administrateur, sans assistant, en deux secondes environ.
-2. Muelle est récent : SmartScreen peut ne pas encore le reconnaître et
+2. Flote est récent : SmartScreen peut ne pas encore le reconnaître et
    indiquer qu'il a protégé votre ordinateur. Choisissez **Informations
-   complémentaires → Exécuter quand même**. Voir la
-   [politique de signature du code](https://muelle.crafter.run/code-signing-policy).
-3. Ouvrez **Muelle** depuis le menu Démarrer, puis choisissez **Dock** pour
+   complémentaires → Exécuter quand même**.
+3. Ouvrez **Flote** depuis le menu Démarrer, puis choisissez **Dock** pour
    personnaliser le dock et la barre de menus.
 
 ## Essayer sous Windows
@@ -100,7 +99,7 @@ cargo run -p muelle
 ```
 
 Le dock masque la barre des tâches tant qu'il tourne. Appuyez sur **Ctrl+C**
-dans le terminal pour le quitter ; Muelle devrait rétablir la barre des tâches
+dans le terminal pour le quitter ; Flote devrait rétablir la barre des tâches
 automatiquement. S'il faut la rétablir à la main :
 
 ```powershell
@@ -151,23 +150,23 @@ pnpm build
 
 ## Confidentialité
 
-Muelle ne collecte aucune donnée, n'a pas de télémétrie et n'envoie jamais rien
+Flote ne collecte aucune donnée, n'a pas de télémétrie et n'envoie jamais rien
 au projet. Il fait deux sortes de requêtes réseau, toutes deux facultatives :
 
 - **Mises à jour :** Réglages demande à GitHub Releases s'il existe une
   nouvelle version à son ouverture, et une fois par jour, quelques minutes
-  après l'allumage de l'ordinateur, Muelle fait de même en arrière-plan et
+  après l'allumage de l'ordinateur, Flote fait de même en arrière-plan et
   installe ce qu'il trouve (le dock lui-même n'utilise jamais le réseau).
   Désactivez l'installation dans Réglages → Système → *Installer
   automatiquement les mises à jour*, ou le tout avec *Rechercher
   automatiquement les mises à jour*.
 - **Utilisation des fournisseurs d'IA :** tant qu'un client pris en charge
-  tourne, Muelle lit sa connexion locale existante et demande à ce fournisseur
+  tourne, Flote lit sa connexion locale existante et demande à ce fournisseur
   les limites disponibles de l'abonnement toutes les cinq minutes tant que
   l'îlot est visible, ou quand vous appuyez sur Actualiser. Pour Gemini CLI et
   Antigravity, les quotas Gemini Pro et Flash s'affichent séparément quand ils
   sont disponibles ; Antigravity est interrogé via son service local. Les
-  identifiants restent en mémoire et ne sont jamais enregistrés par Muelle.
+  identifiants restent en mémoire et ne sont jamais enregistrés par Flote.
   Désactivez-la dans Réglages → Barre de menus → *Afficher l'utilisation des
   fournisseurs d'IA*.
 

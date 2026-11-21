@@ -30,9 +30,13 @@ const SECONDARY: PCWSTR = w!("Shell_SecondaryTrayWnd");
 const GHOST_STYLES: isize = (WS_EX_LAYERED.0 | WS_EX_TRANSPARENT.0) as isize;
 
 fn state_file() -> PathBuf {
-    PathBuf::from(env::var_os("LOCALAPPDATA").unwrap_or_default())
-        .join("Muelle")
-        .join("taskbar-original")
+    let local = PathBuf::from(env::var_os("LOCALAPPDATA").unwrap_or_default());
+    let flote = local.join("Flote");
+    if flote.exists() {
+        flote.join("taskbar-original")
+    } else {
+        local.join("Muelle").join("taskbar-original")
+    }
 }
 
 /// Hides the taskbar on all monitors.
