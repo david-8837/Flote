@@ -166,11 +166,12 @@ fn shortcut_matches_pwa(link: &Path, aumid: &str, crx_id: &str) -> bool {
 
     // 2. Check shortcut property store for PKEY_AppUserModel_ID
     unsafe {
-        if let Ok(store) = SHGetPropertyStoreFromParsingName::<IPropertyStore>(
+        let store: windows::core::Result<IPropertyStore> = SHGetPropertyStoreFromParsingName(
             &HSTRING::from(link.as_os_str()),
             None,
             GPS_DEFAULT,
-        ) {
+        );
+        if let Ok(store) = store {
             if let Ok(prop) = store.GetValue(&PKEY_AppUserModel_ID) {
                 let shortcut_aumid = prop.to_string();
                 if shortcut_aumid.eq_ignore_ascii_case(aumid) {
@@ -213,11 +214,12 @@ pub fn pwa_id_from_shortcut(link: &Path, target: &str, arguments: &str) -> Optio
 
     // Check shortcut property store for PKEY_AppUserModel_ID
     unsafe {
-        if let Ok(store) = SHGetPropertyStoreFromParsingName::<IPropertyStore>(
+        let store: windows::core::Result<IPropertyStore> = SHGetPropertyStoreFromParsingName(
             &HSTRING::from(link.as_os_str()),
             None,
             GPS_DEFAULT,
-        ) {
+        );
+        if let Ok(store) = store {
             if let Ok(prop) = store.GetValue(&PKEY_AppUserModel_ID) {
                 let aumid = prop.to_string();
                 if aumid.contains("._crx_") || aumid.contains("_crx_") || aumid.contains(".pwa.") {
