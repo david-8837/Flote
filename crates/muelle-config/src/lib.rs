@@ -534,7 +534,8 @@ mod tests {
 
         let mut config_zero = Config::default();
         config_zero.auto_hide_delay_ms = Some(0);
-        assert_eq!(config_zero.sanitized().auto_hide_delay_ms, Some(0));
+        let config_zero = config_zero.sanitized();
+        assert_eq!(config_zero.auto_hide_delay_ms, Some(0));
         assert_eq!(config_zero.auto_hide_delay_ms_or_default(), 0);
         Ok(())
     }
@@ -793,7 +794,9 @@ mod tests {
 
         // Clamping check
         let json_too_fast = r#"{"genieDurationMs":50}"#;
-        let config_fast: Config = serde_json::from_str(json_too_fast).unwrap_or_default().sanitized();
+        let config_fast: Config = serde_json::from_str::<Config>(json_too_fast)
+            .unwrap_or_default()
+            .sanitized();
         assert_eq!(config_fast.genie_duration_ms, Some(150));
         assert_eq!(config_fast.genie_duration_seconds(), 0.15);
     }
