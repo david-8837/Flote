@@ -6,8 +6,8 @@ import {
   type Config,
   type DockPosition,
   type GenieSpeed,
-  type IslandStyle,
   type Language,
+  type SideNotchEdge,
   type UpdateInfo,
   AUTO_HIDE_DELAY_MS_RANGE,
   DEFAULT_AUTO_HIDE_DELAY_MS,
@@ -34,7 +34,7 @@ import {
   setExplorerPinned,
 } from "./config";
 import { Card, Row, Segmented, Slider, SubRow, Toggle, VisualChoices } from "./controls";
-import { DockPreview, IslandPreview, SettingIcon, GenieSpeedPreview } from "./visuals";
+import { DockPreview, SettingIcon, GenieSpeedPreview } from "./visuals";
 import { type SectionId, SectionIcon } from "./icons";
 import { UpdateBanner } from "./UpdateBanner";
 import en from "./i18n/en.json";
@@ -425,10 +425,17 @@ export function App() {
                     onChange={(autoHide) => update({ autoHide })}
                   />
                 </Row>
+                <Row icon={<SettingIcon name="hide" />} label={t.intellihide} hint={t.intellihideHint}>
+                  <Toggle
+                    label={t.intellihide}
+                    checked={config.intellihide}
+                    onChange={(intellihide) => update({ intellihide })}
+                  />
+                </Row>
                 <SubRow
                   label={t.autoHideDelay}
                   hint={t.autoHideDelayHint}
-                  open={config.autoHide}
+                  open={config.autoHide || config.intellihide}
                 >
                   <Slider
                     label={t.autoHideDelay}
@@ -619,6 +626,83 @@ export function App() {
                 </Row>
               </Card>
             </>
+          ) : section === "topnotch" ? (
+            <>
+              <Card>
+                <Row icon={<SettingIcon name="notch" />} label={t.topNotch} hint={t.topNotchHint}>
+                  <Toggle
+                    label={t.topNotch}
+                    checked={config.topNotch}
+                    onChange={(topNotch) => update({ topNotch })}
+                  />
+                </Row>
+                <SubRow label={t.topNotchMusic} hint={t.topNotchMusicHint} open={config.topNotch}>
+                  <Toggle
+                    label={t.topNotchMusic}
+                    checked={config.topNotchMusic}
+                    onChange={(topNotchMusic) => update({ topNotchMusic })}
+                  />
+                </SubRow>
+                <SubRow label={t.topNotchLyrics} hint={t.topNotchLyricsHint} open={config.topNotch}>
+                  <Toggle
+                    label={t.topNotchLyrics}
+                    checked={config.topNotchLyrics}
+                    onChange={(topNotchLyrics) => update({ topNotchLyrics })}
+                  />
+                </SubRow>
+                <SubRow label={t.topNotchIdleEyes} hint={t.topNotchIdleEyesHint} open={config.topNotch}>
+                  <Toggle
+                    label={t.topNotchIdleEyes}
+                    checked={config.topNotchIdleEyes}
+                    onChange={(topNotchIdleEyes) => update({ topNotchIdleEyes })}
+                  />
+                </SubRow>
+                <SubRow label={t.topNotchCharging} hint={t.topNotchChargingHint} open={config.topNotch}>
+                  <Toggle
+                    label={t.topNotchCharging}
+                    checked={config.topNotchCharging}
+                    onChange={(topNotchCharging) => update({ topNotchCharging })}
+                  />
+                </SubRow>
+              </Card>
+            </>
+          ) : section === "sidenotch" ? (
+            <>
+              <Card>
+                <Row icon={<SettingIcon name="notch" />} label={t.sideNotch} hint={t.sideNotchHint}>
+                  <Toggle
+                    label={t.sideNotch}
+                    checked={config.sideNotch}
+                    onChange={(sideNotch) => update({ sideNotch })}
+                  />
+                </Row>
+                <SubRow label={t.sideNotchAutoHide} hint={t.sideNotchAutoHideHint} open={config.sideNotch}>
+                  <Toggle
+                    label={t.sideNotchAutoHide}
+                    checked={config.sideNotchAutoHide}
+                    onChange={(sideNotchAutoHide) => update({ sideNotchAutoHide })}
+                  />
+                </SubRow>
+                <SubRow label={t.sideNotchEdge} open={config.sideNotch}>
+                  <Segmented<SideNotchEdge>
+                    label={t.sideNotchEdge}
+                    value={config.sideNotchEdge ?? "right"}
+                    options={[
+                      { value: "right", label: t.sideNotchEdgeRight },
+                      { value: "left", label: t.sideNotchEdgeLeft },
+                    ]}
+                    onChange={(sideNotchEdge) => update({ sideNotchEdge })}
+                  />
+                </SubRow>
+                <SubRow label={t.sideNotchProviders} hint={t.sideNotchProvidersHint} open={config.sideNotch}>
+                  <Toggle
+                    label={t.sideNotchProviders}
+                    checked={config.aiUsage}
+                    onChange={(aiUsage) => update({ aiUsage })}
+                  />
+                </SubRow>
+              </Card>
+            </>
           ) : section === "menubar" ? (
             <>
               <Card>
@@ -636,34 +720,11 @@ export function App() {
                     onChange={(menuBarAutoHide) => update({ menuBarAutoHide })}
                   />
                 </SubRow>
-                <SubRow label={t.menuBarMusic} hint={t.menuBarMusicHint} open={config.menuBar}>
+                <SubRow label={t.menuBarIntellihide} hint={t.menuBarIntellihideHint} open={config.menuBar}>
                   <Toggle
-                    label={t.menuBarMusic}
-                    checked={config.menuBarMusic}
-                    onChange={(menuBarMusic) => update({ menuBarMusic })}
-                  />
-                </SubRow>
-                <SubRow label={t.aiUsage} hint={t.aiUsageHint} open={config.menuBar}>
-                  <Toggle
-                    label={t.aiUsage}
-                    checked={config.aiUsage}
-                    onChange={(aiUsage) => update({ aiUsage })}
-                  />
-                </SubRow>
-                <SubRow
-                  label={t.islandStyle}
-                  stacked
-                  open={config.menuBar && (config.menuBarMusic || config.aiUsage)}
-                >
-                  <VisualChoices<IslandStyle>
-                    label={t.islandStyle}
-                    hideLabel
-                    value={config.menuBarIslandStyle}
-                    options={[
-                      { value: "notch", label: t.islandStyleNotch, preview: <IslandPreview style="notch" wallpaper={wallpaper} /> },
-                      { value: "bubble", label: t.islandStyleBubble, preview: <IslandPreview style="bubble" wallpaper={wallpaper} /> },
-                    ]}
-                    onChange={(menuBarIslandStyle) => update({ menuBarIslandStyle })}
+                    label={t.menuBarIntellihide}
+                    checked={config.menuBarIntellihide}
+                    onChange={(menuBarIntellihide) => update({ menuBarIntellihide })}
                   />
                 </SubRow>
                 <SubRow label={t.accessoryBattery} hint={t.accessoryBatteryHint} open={config.menuBar}>
@@ -809,7 +870,7 @@ function updateHint(t: Texts, state: UpdateState, version: string): string {
   }
 }
 
-const SECTIONS: readonly SectionId[] = ["dock", "windows", "menubar", "system"];
+const SECTIONS: readonly SectionId[] = ["dock", "windows", "topnotch", "sidenotch", "menubar", "system"];
 
 function sectionTitle(t: Texts, section: SectionId): string {
   switch (section) {
@@ -817,6 +878,10 @@ function sectionTitle(t: Texts, section: SectionId): string {
       return t.dock;
     case "windows":
       return t.windows;
+    case "topnotch":
+      return t.topNotch;
+    case "sidenotch":
+      return t.sideNotch;
     case "menubar":
       return t.menuBar;
     case "system":

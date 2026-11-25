@@ -6,11 +6,13 @@
 
 import type { ReactNode } from "react";
 
-export type SectionId = "dock" | "windows" | "menubar" | "system";
+export type SectionId = "dock" | "windows" | "topnotch" | "sidenotch" | "menubar" | "system";
 
 const TILES: Record<SectionId, [string, string]> = {
   dock: ["#4aa3ff", "#0a6cf0"],
   windows: ["#b57bff", "#7d3ff0"],
+  topnotch: ["#38bdf8", "#0284c7"],
+  sidenotch: ["#f43f5e", "#e11d48"],
   menubar: ["#ff9f45", "#f0640a"],
   system: ["#a1a1a6", "#6e6e73"],
 };
@@ -31,6 +33,24 @@ const GLYPHS: Record<SectionId, ReactNode> = {
       <rect x="4.5" y="5.5" width="11" height="8.5" rx="1.4" fill="#fff" opacity="0.55" />
       <rect x="8.5" y="9.5" width="11" height="9" rx="1.4" fill="#fff" />
       <rect x="8.5" y="9.5" width="11" height="2.2" rx="1" fill="#000" opacity="0.18" />
+    </>
+  ),
+  // Top notch widget.
+  topnotch: (
+    <>
+      <rect x="4" y="5" width="16" height="14" rx="2" fill="#fff" opacity="0.3" />
+      <path d="M7 5h10v2a3 3 0 0 1-3 3h-4a3 3 0 0 1-3-3V5z" fill="#fff" />
+      <circle cx="12" cy="7.2" r="1.1" fill="#0284c7" />
+    </>
+  ),
+  // Side notch widget for AI.
+  sidenotch: (
+    <>
+      <rect x="4" y="5" width="16" height="14" rx="2" fill="#fff" opacity="0.3" />
+      <path d="M17 7a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h3V7h-3z" fill="#fff" />
+      <circle cx="16.5" cy="10" r="0.8" fill="#e11d48" />
+      <circle cx="16.5" cy="12" r="0.8" fill="#e11d48" />
+      <circle cx="16.5" cy="14" r="0.8" fill="#e11d48" />
     </>
   ),
   // A bar across the top of a screen.

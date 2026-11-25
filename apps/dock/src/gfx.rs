@@ -335,6 +335,204 @@ impl Gfx {
         })
     }
 
+    /// Curved notch tab silhouette on the screen edge (right or left).
+    pub fn side_notch_mask(
+        &self,
+        width: f32,
+        height: f32,
+        scale: f32,
+        on_right: bool,
+    ) -> Result<CompositionSurfaceBrush> {
+        self.draw(width.ceil() as u32, height.ceil() as u32, |dc| {
+            let shoulder = (16.0 * scale).min(height / 4.0);
+            let corner = (20.0 * scale).min(width / 2.0).min(height / 4.0);
+            unsafe {
+                let white = dc.CreateSolidColorBrush(&WHITE, None)?;
+                let shape = dc.GetFactory()?.CreatePathGeometry()?;
+                let sink = shape.Open()?;
+                if on_right {
+                    // Right edge is screen border: x = width
+                    sink.BeginFigure(Vector2 { X: width, Y: 0.0 }, D2D1_FIGURE_BEGIN_FILLED);
+                    // Shoulder curve from screen edge out to tab outer curve
+                    sink.AddBezier(&D2D1_BEZIER_SEGMENT {
+                        point1: Vector2 { X: width - shoulder * 0.5, Y: 0.0 },
+                        point2: Vector2 { X: width - shoulder, Y: shoulder * 0.4 },
+                        point3: Vector2 { X: width - shoulder, Y: shoulder },
+                    });
+                    // Left corner top
+                    sink.AddLine(Vector2 { X: corner, Y: shoulder });
+                    sink.AddBezier(&D2D1_BEZIER_SEGMENT {
+                        point1: Vector2 { X: corner * 0.35, Y: shoulder },
+                        point2: Vector2 { X: 0.0, Y: shoulder + corner * 0.35 },
+                        point3: Vector2 { X: 0.0, Y: shoulder + corner },
+                    });
+                    // Left vertical edge
+                    sink.AddLine(Vector2 { X: 0.0, Y: height - shoulder - corner });
+                    // Left corner bottom
+                    sink.AddBezier(&D2D1_BEZIER_SEGMENT {
+                        point1: Vector2 { X: 0.0, Y: height - shoulder - corner * 0.35 },
+                        point2: Vector2 { X: corner * 0.35, Y: height - shoulder },
+                        point3: Vector2 { X: corner, Y: height - shoulder },
+                    });
+                    // Bottom shoulder back to screen edge
+                    sink.AddLine(Vector2 { X: width - shoulder, Y: height - shoulder });
+                    sink.AddBezier(&D2D1_BEZIER_SEGMENT {
+                        point1: Vector2 { X: width - shoulder, Y: height - shoulder * 0.4 },
+                        point2: Vector2 { X: width - shoulder * 0.5, Y: height },
+                        point3: Vector2 { X: width, Y: height },
+                    });
+                    // Up along the right screen edge
+                    sink.AddLine(Vector2 { X: width, Y: 0.0 });
+                } else {
+                    // Left edge is screen border: x = 0
+                    sink.BeginFigure(Vector2 { X: 0.0, Y: 0.0 }, D2D1_FIGURE_BEGIN_FILLED);
+                    sink.AddBezier(&D2D1_BEZIER_SEGMENT {
+                        point1: Vector2 { X: shoulder * 0.5, Y: 0.0 },
+                        point2: Vector2 { X: shoulder, Y: shoulder * 0.4 },
+                        point3: Vector2 { X: shoulder, Y: shoulder },
+                    });
+                    sink.AddLine(Vector2 { X: width - corner, Y: shoulder });
+                    sink.AddBezier(&D2D1_BEZIER_SEGMENT {
+                        point1: Vector2 { X: width - corner * 0.35, Y: shoulder },
+                        point2: Vector2 { X: width, Y: shoulder + corner * 0.35 },
+                        point3: Vector2 { X: width, Y: shoulder + corner },
+                    });
+                    sink.AddLine(Vector2 { X: width, Y: height - shoulder - corner });
+                    sink.AddBezier(&D2D1_BEZIER_SEGMENT {
+                        point1: Vector2 { X: width, Y: height - shoulder - corner * 0.35 },
+                        point2: Vector2 { X: width - corner * 0.35, Y: height - shoulder },
+                        point3: Vector2 { X: width - corner, Y: height - shoulder },
+                    });
+                    sink.AddLine(Vector2 { X: shoulder, Y: height - shoulder });
+                    sink.AddBezier(&D2D1_BEZIER_SEGMENT {
+                        point1: Vector2 { X: shoulder, Y: height - shoulder * 0.4 },
+                        point2: Vector2 { X: shoulder * 0.5, Y: height },
+                        point3: Vector2 { X: 0.0, Y: height },
+                    });
+                    sink.AddLine(Vector2 { X: 0.0, Y: 0.0 });
+                }
+                sink.EndFigure(D2D1_FIGURE_END_CLOSED);
+                sink.Close()?;
+                dc.FillGeometry(&shape, &white, None);
+            }
+            Ok(())
+        })
+    }
+
+    pub fn ai_gauge_ring(
+        &self,
+        used_percent: Option<u8>,
+        scale: f32,
+        accent: Color,
+        size: f32,
+    ) -> Result<LabelBrush> {
+        let center = size / 2.0;
+        let stroke = (3.0 * scale).max(1.5);
+        let radius = center - stroke;
+        let brush = self.draw(size.ceil() as u32, size.ceil() as u32, |dc| {
+            unsafe {
+                let track = dc.CreateSolidColorBrush(&rgb(0.20, 0.22, 0.27, 0.65), None)?;
+                dc.DrawEllipse(
+                    &D2D1_ELLIPSE {
+                        point: Vector2 { X: center, Y: center },
+                        radiusX: radius,
+                        radiusY: radius,
+                    },
+                    &track,
+                    stroke,
+                    None,
+                );
+                if let Some(percent) = used_percent {
+                    let foreground = dc.CreateSolidColorBrush(
+                        &rgb(
+                            f32::from(accent.R) / 255.0,
+                            f32::from(accent.G) / 255.0,
+                            f32::from(accent.B) / 255.0,
+                            1.0,
+                        ),
+                        None,
+                    )?;
+                    let steps = (usize::from(percent) * 48 / 100).min(48);
+                    for index in 0..steps {
+                        let start = -std::f32::consts::FRAC_PI_2
+                            + index as f32 * std::f32::consts::TAU / 48.0;
+                        let end = start + std::f32::consts::TAU / 48.0;
+                        let a = Vector2 {
+                            X: center + radius * start.cos(),
+                            Y: center + radius * start.sin(),
+                        };
+                        let b = Vector2 {
+                            X: center + radius * end.cos(),
+                            Y: center + radius * end.sin(),
+                        };
+                        dc.DrawLine(a, b, &foreground, stroke, None);
+                    }
+                }
+            }
+            Ok(())
+        })?;
+        Ok(LabelBrush {
+            brush,
+            width: size,
+            height: size,
+        })
+    }
+
+    pub fn speech_card_brush(
+        &self,
+        card_w: f32,
+        card_h: f32,
+        arrow_y: f32,
+        arrow_size: f32,
+        point_right: bool,
+        radius: f32,
+    ) -> Result<LabelBrush> {
+        let total_w = card_w + arrow_size;
+        let total_h = card_h;
+        let brush = self.draw(total_w.ceil() as u32, total_h.ceil() as u32, |dc| {
+            unsafe {
+                let bg_color = rgb(0.06, 0.07, 0.09, 0.96);
+                let border_color = rgb(0.20, 0.22, 0.28, 0.70);
+                let bg = dc.CreateSolidColorBrush(&bg_color, None)?;
+                let border = dc.CreateSolidColorBrush(&border_color, None)?;
+
+                let (body_left, arrow_tip_x, arrow_base_x) = if point_right {
+                    (0.0, card_w + arrow_size, card_w)
+                } else {
+                    (arrow_size, 0.0, arrow_size)
+                };
+
+                let card_rect = D2D1_ROUNDED_RECT {
+                    rect: D2D_RECT_F {
+                        left: body_left,
+                        top: 0.0,
+                        right: body_left + card_w,
+                        bottom: card_h,
+                    },
+                    radiusX: radius,
+                    radiusY: radius,
+                };
+                dc.FillRoundedRectangle(&card_rect, &bg);
+                dc.DrawRoundedRectangle(&card_rect, &border, 1.0, None);
+
+                let shape = dc.GetFactory()?.CreatePathGeometry()?;
+                let sink = shape.Open()?;
+                sink.BeginFigure(Vector2 { X: arrow_base_x, Y: arrow_y - arrow_size }, D2D1_FIGURE_BEGIN_FILLED);
+                sink.AddLine(Vector2 { X: arrow_tip_x, Y: arrow_y });
+                sink.AddLine(Vector2 { X: arrow_base_x, Y: arrow_y + arrow_size });
+                sink.EndFigure(D2D1_FIGURE_END_CLOSED);
+                sink.Close()?;
+                dc.FillGeometry(&shape, &bg, None);
+            }
+            Ok(())
+        })?;
+        Ok(LabelBrush {
+            brush,
+            width: total_w,
+            height: total_h,
+        })
+    }
+
     pub fn usage_ring(
         &self,
         used_percent: Option<u8>,

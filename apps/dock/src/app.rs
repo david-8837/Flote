@@ -107,8 +107,10 @@ use crate::{
     multi_window_view::{self, MultiWindowView},
     scene::{Drag, Frame, Scene, SceneInput, SlotContent, Theme},
     shell_work::{self, Action as ShellAction},
+    side_notch::SideNotch,
     strings::{self, text},
     thumbnails::Thumbnails,
+    top_notch::TopNotch,
 };
 
 /// These constants are not named in the `windows` crate.
@@ -128,6 +130,7 @@ const WM_POWERBROADCAST: u32 = 0x0218;
 const PBT_APMRESUMEAUTOMATIC: usize = 0x0012;
 /// Sent when the charger is plugged in or out, and when energy saver turns
 /// on or off.
+const EVENT_SYSTEM_MOVESIZEEND: u32 = 0x000B;
 const PBT_APMPOWERSTATUSCHANGE: usize = 0x000A;
 const PBT_POWERSETTINGCHANGE: usize = 0x8013;
 
@@ -303,6 +306,7 @@ static DROP_WINDOW: AtomicIsize = AtomicIsize::new(0);
 static MINIMIZE_HOOK: AtomicIsize = AtomicIsize::new(0);
 static CLOAK_HOOK: AtomicIsize = AtomicIsize::new(0);
 static FOREGROUND_HOOK: AtomicIsize = AtomicIsize::new(0);
+static MOVESIZE_HOOK: AtomicIsize = AtomicIsize::new(0);
 /// The window in front before the Alt+Tab switcher opened.
 static LAST_FRONT: AtomicIsize = AtomicIsize::new(0);
 
@@ -353,6 +357,10 @@ struct Entry {
     /// A group's apps, in order; empty for anything else. Part of the
     /// scene's key: the group's tile shows them.
     members: Vec<String>,
+}
+
+fn rects_intersect(a: RECT, b: RECT) -> bool {
+    a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
 }
 
 fn app_has_attention(attention: &Attention, windows: &[TrackedWindow], id: &str) -> bool {
@@ -573,6 +581,7 @@ struct StageKey {
     glass: bool,
     bin_full: bool,
     auto_hide: bool,
+    intellihide: bool,
     icon_size: u32,
     max_scale: f32,
     indicators: bool,
@@ -827,6 +836,8 @@ struct App {
     /// What the windows minimized with the genie looked like, oldest first.
     snapshots: Vec<(isize, Snapshot)>,
     menubar: Option<MenuBar>,
+    top_notch: Option<TopNotch>,
+    side_notch: Option<SideNotch>,
     edge_watch: Option<EdgeWatch>,
     /// Screen point identifying the last display chosen by a bottom-edge dwell.
     dock_display: Option<POINT>,
@@ -1294,6 +1305,7 @@ impl App {
             glass: transparency_enabled(),
             bin_full: self.bin_full,
             auto_hide: self.config.auto_hide,
+            intellihide: self.config.intellihide,
             icon_size: self.config.icon_size,
             max_scale: self.config.max_scale(),
             indicators: self.config.show_indicators,
@@ -1381,8 +1393,8 @@ impl App {
             DockEdge::Right => (screen.right as f32 - margin - dock.height, centred),
         };
         let frame = DockFrame::new(edge, (dock_x, dock_y), dock.height);
-        // A hidden dock leaves the whole screen to maximized windows.
-        let strip = if self.config.auto_hide {
+        // A hidden or intellihide dock leaves the whole screen to maximized windows.
+        let strip = if self.config.auto_hide || self.config.intellihide {
             0
         } else {
             (dock.height + 2.0 * margin) as i32
@@ -1588,7 +1600,7 @@ impl App {
         if let Some(appbar) = &mut self.appbar {
             // Auto-hide reserves zero height. Moving the dock must never
             // change the destination monitor's work area.
-            let reservation = if self.config.auto_hide {
+            let reservation = if self.config.auto_hide || self.config.intellihide {
                 primary_monitor().map_or(screen, |primary| primary.screen)
             } else {
                 screen
@@ -1613,7 +1625,7 @@ impl App {
         // dock (for example, after launching an app with a dock click).
         let input_zone = if self.hovering || self.drag.is_some() {
             &stage.hover_zone
-        } else if self.config.auto_hide && self.slide.target == 1.0 {
+        } else if (self.config.auto_hide || self.config.intellihide) && self.slide.target == 1.0 {
             &stage.edge_zone
         } else {
             &stage.rest_zone
@@ -1995,7 +2007,7 @@ impl App {
         self.cursor = along;
         if !self.hovering {
             let delay_ms = self.config.auto_hide_delay_ms_or_default();
-            if self.config.auto_hide && self.slide.target == 1.0 && delay_ms > 0 {
+            if (self.config.auto_hide || self.config.intellihide) && self.slide.target == 1.0 && delay_ms > 0 {
                 if !self.reveal_pending {
                     self.reveal_pending = true;
                     // SAFETY: One-shot reveal dwell timer on our own input window.
@@ -2046,7 +2058,7 @@ impl App {
             return Ok(());
         }
         self.reveal_pending = false;
-        if !self.config.auto_hide || self.hovering || self.fullscreen || self.menu_open {
+        if (!self.config.auto_hide && !self.config.intellihide) || self.hovering || self.fullscreen || self.menu_open {
             return Ok(());
         }
         let mut point = POINT::default();
@@ -2116,7 +2128,7 @@ impl App {
         unsafe {
             let _ = KillTimer(Some(self.input), PREVIEW_TIMER);
         }
-        if self.preview.take().is_some() && self.config.auto_hide && !self.hovering {
+        if self.preview.take().is_some() && (self.config.auto_hide || self.config.intellihide) && !self.hovering {
             unsafe { SetTimer(Some(self.input), HIDE_TIMER, HIDE_DELAY_MS, None) };
         }
     }
@@ -2222,7 +2234,7 @@ impl App {
         }
         self.amount.target = 0.0;
         self.last_frame = Instant::now();
-        if self.config.auto_hide {
+        if self.config.auto_hide || self.config.intellihide {
             // SAFETY: Timer on our own window.
             unsafe { SetTimer(Some(self.input), HIDE_TIMER, HIDE_DELAY_MS, None) };
         }
@@ -2259,7 +2271,7 @@ impl App {
             SetTimer(Some(self.input), SWITCHER_TIMER, SWITCHER_POLL_MS, None);
             let _ = KillTimer(Some(self.input), HIDE_TIMER);
         }
-        if self.config.auto_hide && !self.fullscreen {
+        if (self.config.auto_hide || self.config.intellihide) && !self.fullscreen {
             self.slide.target = 0.0;
             self.last_frame = Instant::now();
             self.place_windows()?;
@@ -2637,6 +2649,11 @@ impl App {
             muelle_shell::system::energy_saver_on(),
         );
         let before = self.power_seen.replace(now);
+        if let (Some((Some(false), _)), (Some(true), _)) = (before, now) {
+            if let Some(bar) = &mut self.menubar {
+                let _ = bar.trigger_charging_banner(&self.gfx);
+            }
+        }
         let charging_allowed = self
             .charging_shown
             .is_none_or(|shown| shown.elapsed() >= CHARGING_AGAIN);
@@ -2660,8 +2677,7 @@ impl App {
     }
 
     fn hide_if_unused(&mut self) -> Result<()> {
-        if !self.config.auto_hide
-            || self.mascot.is_some()
+        if self.mascot.is_some()
             || self.menu_open
             || self.drag_over
             || self.hovering
@@ -2672,9 +2688,142 @@ impl App {
         {
             return Ok(());
         }
-        self.slide.target = 1.0;
-        self.last_frame = Instant::now();
-        self.place_windows()
+        if self.config.auto_hide || (self.config.intellihide && self.is_overlapping()) {
+            self.slide.target = 1.0;
+            self.last_frame = Instant::now();
+            self.place_windows()
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Checks whether any non-minimized window on the dock's monitor overlaps
+    /// the dock's resting bounds or is maximized/fullscreen.
+    fn is_overlapping(&self) -> bool {
+        let Some(stage) = &self.stage else {
+            return false;
+        };
+        let dock_rect = stage.rest_zone;
+        let screen = stage.key.screen;
+
+        if tracker::foreground_is_fullscreen(screen) {
+            return true;
+        }
+
+        let front = tracker::foreground_window();
+        if front != 0
+            && !tracker::is_desktop(HWND(front as *mut _))
+            && !tracker::is_task_switcher(HWND(front as *mut _))
+        {
+            if let Some((rect, is_maximized)) = tracker::screen_rect(front) {
+                if rects_intersect(rect, screen) {
+                    if is_maximized || rects_intersect(rect, dock_rect) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        for window in &self.windows {
+            if window.minimized {
+                continue;
+            }
+            if let Some((rect, is_maximized)) = tracker::screen_rect(window.hwnd) {
+                if rects_intersect(rect, screen) {
+                    if is_maximized || rects_intersect(rect, dock_rect) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Automatically hides the dock if an app window overlaps it or is maximized,
+    /// and reveals it when the desktop or non-overlapping area is clear.
+    fn update_intellihide(&mut self) -> Result<()> {
+        if !self.config.intellihide || self.config.auto_hide {
+            return Ok(());
+        }
+        if self.hovering
+            || self.mascot.is_some()
+            || self.menu_open
+            || self.drag_over
+            || self.drag.is_some()
+            || self.switching
+            || self.preview.is_some()
+            || self.group_view.is_some()
+        {
+            return Ok(());
+        }
+        let target = if self.is_overlapping() { 1.0 } else { 0.0 };
+        if (self.slide.target - target).abs() > 0.01 {
+            self.slide.target = target;
+            self.last_frame = Instant::now();
+            self.place_windows()?;
+            self.render()?;
+        }
+        Ok(())
+    }
+
+    /// Checks whether any non-minimized window on the primary screen overlaps
+    /// the menu bar's bounds or is maximized/fullscreen.
+    fn is_menu_bar_overlapping(&self) -> bool {
+        let Some(bar) = &self.menubar else {
+            return false;
+        };
+        let bar_rect = bar.bounds();
+        let Some(primary) = primary_monitor() else {
+            return false;
+        };
+        let screen = primary.screen;
+
+        if tracker::foreground_is_fullscreen(screen) {
+            return true;
+        }
+
+        let front = tracker::foreground_window();
+        if front != 0
+            && !tracker::is_desktop(HWND(front as *mut _))
+            && !tracker::is_task_switcher(HWND(front as *mut _))
+        {
+            if let Some((rect, is_maximized)) = tracker::screen_rect(front) {
+                if rects_intersect(rect, screen) {
+                    if is_maximized || rects_intersect(rect, bar_rect) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        for window in &self.windows {
+            if window.minimized {
+                continue;
+            }
+            if let Some((rect, is_maximized)) = tracker::screen_rect(window.hwnd) {
+                if rects_intersect(rect, screen) {
+                    if is_maximized || rects_intersect(rect, bar_rect) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Automatically hides the menu bar if an app window overlaps it or is maximized,
+    /// and reveals it when the desktop or non-overlapping area is clear.
+    fn update_menu_bar_intellihide(&mut self) -> Result<()> {
+        if !self.config.menu_bar || !self.config.menu_bar_intellihide || self.config.menu_bar_auto_hide {
+            return Ok(());
+        }
+        let overlapping = self.is_menu_bar_overlapping();
+        if let Some(bar) = &mut self.menubar {
+            bar.set_overlapping(&self.gfx, overlapping)?;
+        }
+        Ok(())
     }
 
     /// Only running or pinned apps, and groups, can be dragged.
@@ -3205,7 +3354,7 @@ impl App {
         if !drag.from_group || self.hovering {
             return Ok(());
         }
-        if self.config.auto_hide {
+        if self.config.auto_hide || self.config.intellihide {
             // SAFETY: Timer on our own window.
             unsafe { SetTimer(Some(self.input), HIDE_TIMER, HIDE_DELAY_MS, None) };
         }
@@ -3996,8 +4145,14 @@ impl App {
             self.restore_transitions();
             self.snapshots.clear();
         }
-        if config.auto_hide != self.config.auto_hide {
-            self.slide.target = if config.auto_hide { 1.0 } else { 0.0 };
+        if config.auto_hide != self.config.auto_hide || config.intellihide != self.config.intellihide {
+            self.slide.target = if config.auto_hide {
+                1.0
+            } else if config.intellihide {
+                if self.is_overlapping() { 1.0 } else { 0.0 }
+            } else {
+                0.0
+            };
             self.last_frame = Instant::now();
         }
         let moved = config.dock_position != self.config.dock_position;
@@ -4013,7 +4168,9 @@ impl App {
         self.apply_menu_bar_setting();
         self.update_menu_bar_app()?;
         self.calm_windows();
-        self.refresh()
+        self.refresh()?;
+        self.update_intellihide()?;
+        self.update_menu_bar_intellihide()
     }
 
     /// Adds the apps pinned to the Windows taskbar that the dock does not
@@ -4271,7 +4428,9 @@ impl App {
             self.render()?;
         }
         // A foreground-window change may mean an app entered or exited full-screen mode.
-        self.update_fullscreen()
+        self.update_fullscreen()?;
+        self.update_intellihide()?;
+        self.update_menu_bar_intellihide()
     }
 
     fn tick(&mut self) -> Result<Option<Outside>> {
@@ -4398,6 +4557,7 @@ impl App {
                 self.config.ai_usage,
                 self.config.menu_bar_music,
                 self.config.menu_bar_auto_hide,
+                self.config.menu_bar_intellihide,
                 widgets,
             )
             .inspect_err(|error| eprintln!("muelle: barra superior: {error:#}"))
@@ -4405,7 +4565,7 @@ impl App {
         }
         if let Some(bar) = &mut self.menubar {
             let applied = bar
-                .set_auto_hide(self.config.menu_bar_auto_hide)
+                .set_auto_hide(self.config.menu_bar_auto_hide, self.config.menu_bar_intellihide)
                 .and_then(|()| bar.set_usage_enabled(&self.gfx, self.config.ai_usage))
                 .and_then(|()| bar.set_media_enabled(&self.gfx, self.config.menu_bar_music))
                 .and_then(|()| bar.set_widgets(&self.gfx, widgets))
@@ -4422,6 +4582,52 @@ impl App {
             }
         }
         self.apply_edge_settings();
+        let _ = self.update_menu_bar_intellihide();
+        self.apply_top_notch_setting();
+        self.apply_side_notch_setting();
+    }
+
+    fn apply_top_notch_setting(&mut self) {
+        if !self.config.top_notch {
+            self.top_notch = None;
+            return;
+        }
+        if self.top_notch.is_none() {
+            self.top_notch = TopNotch::create(&self.gfx).ok();
+        }
+        if let Some(notch) = &mut self.top_notch {
+            if let Some(monitor) = primary_monitor() {
+                notch.set_screen(monitor.screen, monitor.scale);
+            }
+            notch.enabled = self.config.top_notch;
+            notch.music_enabled = self.config.top_notch_music;
+            notch.lyrics_enabled = self.config.top_notch_lyrics;
+            notch.idle_eyes_enabled = self.config.top_notch_idle_eyes;
+            notch.charging_enabled = self.config.top_notch_charging;
+            let _ = notch.media_changed(&self.gfx);
+            let battery = muelle_shell::system::battery();
+            let _ = notch.set_battery(&self.gfx, battery);
+            let _ = notch.draw(&self.gfx);
+        }
+    }
+
+    fn apply_side_notch_setting(&mut self) {
+        if !self.config.side_notch {
+            self.side_notch = None;
+            return;
+        }
+        if self.side_notch.is_none() {
+            self.side_notch = SideNotch::create(&self.gfx).ok();
+        }
+        if let Some(notch) = &mut self.side_notch {
+            if let Some(monitor) = primary_monitor() {
+                notch.set_screen(monitor.screen, monitor.scale);
+            }
+            notch.enabled = self.config.side_notch;
+            notch.auto_hide = self.config.side_notch_auto_hide;
+            notch.edge = self.config.side_notch_edge;
+            let _ = notch.draw(&self.gfx);
+        }
     }
 
     /// The screen edge chosen in Settings.
@@ -4443,7 +4649,7 @@ impl App {
         }
         // From the settings, not the live bar: at startup the dock is placed
         // before the bar exists, and it must not move once the bar appears.
-        if !self.config.menu_bar || self.config.menu_bar_auto_hide {
+        if !self.config.menu_bar || self.config.menu_bar_auto_hide || self.config.menu_bar_intellihide {
             return 0;
         }
         primary_monitor()
@@ -4453,7 +4659,7 @@ impl App {
 
     fn dock_monitor(&self) -> Option<Monitor> {
         self.dock_display
-            .filter(|_| self.config.auto_hide)
+            .filter(|_| self.config.auto_hide || self.config.intellihide)
             .and_then(monitor_at)
             .or_else(primary_monitor)
     }
@@ -4462,10 +4668,10 @@ impl App {
         edge_watch::set_dock_dwell(std::time::Duration::from_millis(
             self.config.auto_hide_delay_ms_or_default() as u64,
         ));
-        if !self.config.auto_hide {
+        if !self.config.auto_hide && !self.config.intellihide {
             self.dock_display = None;
         }
-        let mut screens = if self.config.auto_hide {
+        let mut screens = if self.config.auto_hide || self.config.intellihide {
             monitor_rects()
         } else {
             Vec::new()
@@ -4476,7 +4682,9 @@ impl App {
             screens.clear();
         }
         edge_watch::set_dock_monitors(screens, self.position());
-        let enabled = watch_dock || (self.menubar.is_some() && self.config.menu_bar_auto_hide);
+        let enabled = watch_dock
+            || (self.menubar.is_some()
+                && (self.config.menu_bar_auto_hide || self.config.menu_bar_intellihide));
         if enabled && self.edge_watch.is_none() {
             self.edge_watch = EdgeWatch::start(self.visual)
                 .inspect_err(|error| {
@@ -4504,7 +4712,7 @@ impl App {
         let on_dock_edge = matches!(target, Some(EdgeTarget::Dock(screen))
             if self.stage.as_ref().is_some_and(|stage| stage.key.screen == screen));
         self.arm_edge_timer(wait);
-        if !on_dock_edge && self.config.auto_hide && !self.hovering && self.slide.target == 0.0 {
+        if !on_dock_edge && (self.config.auto_hide || self.config.intellihide) && !self.hovering && self.slide.target == 0.0 {
             // SAFETY: Existing hide timer on the dock input window.
             unsafe {
                 SetTimer(Some(self.input), HIDE_TIMER, HIDE_DELAY_MS, None);
@@ -4549,7 +4757,7 @@ impl App {
         let mouse_down = [VK_LBUTTON, VK_RBUTTON, VK_MBUTTON]
             .into_iter()
             .any(|key| unsafe { GetAsyncKeyState(i32::from(key.0)) < 0 });
-        if !self.config.auto_hide
+        if (!self.config.auto_hide && !self.config.intellihide)
             || self.hovering
             || self.menu_open
             || self.press.is_some()
@@ -4727,6 +4935,8 @@ impl App {
         #[cfg(feature = "recover-browser-z-order")]
         tracker::recover_browser_z_order(&self.windows, foreground);
         self.update_fullscreen()?;
+        self.update_intellihide()?;
+        self.update_menu_bar_intellihide()?;
         if attention_changed {
             self.sync_attention_visuals()?;
             self.render()?;
@@ -4826,6 +5036,11 @@ unsafe extern "system" fn on_win_event(
             LAST_FRONT.store(hwnd.0 as isize, Ordering::Relaxed);
             with_app("ventana activa", App::on_foreground_changed);
         }
+    } else if event == EVENT_SYSTEM_MOVESIZEEND {
+        with_app("mover o redimensionar", |app| {
+            app.update_intellihide()?;
+            app.update_menu_bar_intellihide()
+        });
     } else if event == EVENT_OBJECT_CLOAKED || event == EVENT_OBJECT_UNCLOAKED {
         // Shows the windows of the virtual desktop in front, as the Windows
         // taskbar does. A desktop switch cloaks many windows at once; the
@@ -4895,9 +5110,14 @@ pub fn menu_bar_volume_flush() {
 }
 
 pub fn menu_bar_media_changed() {
-    with_app("reproducción", |app| match &mut app.menubar {
-        Some(bar) => bar.media_changed(&app.gfx),
-        None => Ok(()),
+    with_app("reproducción", |app| {
+        if let Some(bar) = &mut app.menubar {
+            let _ = bar.media_changed(&app.gfx);
+        }
+        if let Some(notch) = &mut app.top_notch {
+            let _ = notch.media_changed(&app.gfx);
+        }
+        Ok(())
     });
 }
 
@@ -5052,6 +5272,20 @@ pub fn menu_bar_pointer_moved(x: f32, y: f32) {
 pub fn menu_bar_dismiss_island() {
     with_app("barra superior", |app| match &mut app.menubar {
         Some(bar) => bar.dismiss_island(&app.gfx),
+        None => Ok(()),
+    });
+}
+
+pub fn menu_bar_finish_island_collapse() {
+    with_app("barra superior", |app| match &mut app.menubar {
+        Some(bar) => bar.finish_island_collapse(&app.gfx),
+        None => Ok(()),
+    });
+}
+
+pub fn menu_bar_idle_eyes_tick() {
+    with_app("ojos", |app| match &mut app.menubar {
+        Some(bar) => bar.idle_eyes_tick(&app.gfx),
         None => Ok(()),
     });
 }
@@ -5470,6 +5704,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) ->
             unsafe { SetTimer(Some(hwnd), TASKBAR_TIMER, TASKBAR_DELAY_MS, None) };
             // Timers do not count the time asleep: aim it again by the clock.
             with_app("actualización", |app| {
+                let _ = app.update_intellihide();
+                let _ = app.update_menu_bar_intellihide();
                 app.schedule_update();
                 Ok(())
             });
@@ -5683,6 +5919,8 @@ pub fn run() -> Result<()> {
             flights: Vec::new(),
             snapshots: Vec::new(),
             menubar: None,
+            top_notch: None,
+            side_notch: None,
             edge_watch: None,
             dock_display: None,
             names: HashMap::new(),
@@ -5777,11 +6015,23 @@ pub fn run() -> Result<()> {
             WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
         );
         FOREGROUND_HOOK.store(foreground_hook.0 as isize, Ordering::Relaxed);
+        let movesize_hook = SetWinEventHook(
+            EVENT_SYSTEM_MOVESIZEEND,
+            EVENT_SYSTEM_MOVESIZEEND,
+            None,
+            Some(on_win_event),
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
+        );
+        MOVESIZE_HOOK.store(movesize_hook.0 as isize, Ordering::Relaxed);
         LAST_FRONT.store(tracker::foreground_window(), Ordering::Relaxed);
         let target: IDropTarget = DropTarget.into();
         RegisterDragDrop(input, &target)?;
         DROP_WINDOW.store(input.0 as isize, Ordering::Relaxed);
 
+        let _ = app.update_intellihide();
+        let _ = app.update_menu_bar_intellihide();
         app.schedule_update();
         APP.set(Some(app));
     }

@@ -50,6 +50,8 @@ pub struct Track {
     pub toggle: bool,
     pub next: bool,
     pub artwork: Option<Arc<IconImage>>,
+    pub position_secs: u32,
+    pub duration_secs: u32,
 }
 
 #[cfg(test)]
@@ -62,6 +64,8 @@ impl Track {
             previous: true,
             toggle: true,
             next: true,
+            position_secs: 193,
+            duration_secs: 256,
             ..Default::default()
         }
     }
@@ -78,7 +82,7 @@ pub fn artwork(track: &Track) -> Option<&IconImage> {
                     128,
                     1_000_000,
                 )
-                .map(imagery::circular)
+                .map(|img| imagery::rounded_square(img, 24.0))
             })
             .as_ref()
     })
@@ -103,7 +107,7 @@ fn read_artwork(thumbnail: IRandomAccessStreamReference) -> Option<Arc<IconImage
     let mut bytes = vec![0; size as usize];
     reader.ReadBytes(&mut bytes).ok()?;
     imagery::decode(&bytes, 128, 16_000_000)
-        .map(imagery::circular)
+        .map(|img| imagery::rounded_square(img, 24.0))
         .map(Arc::new)
 }
 
@@ -273,6 +277,14 @@ impl Current {
         }
         let playing = matches!(status, Status::Playing | Status::Changing);
         let controls = info.Controls().ok()?;
+        let timeline = self.session.GetTimelineProperties().ok();
+        let (position_secs, duration_secs) = timeline
+            .map(|t| {
+                let pos = (t.Position().unwrap_or_default().Duration / 10_000_000).max(0) as u32;
+                let end = (t.EndTime().unwrap_or_default().Duration / 10_000_000).max(0) as u32;
+                (pos, end)
+            })
+            .unwrap_or((0, 0));
         Some(Track {
             generation,
             title: self.title.clone(),
@@ -288,6 +300,8 @@ impl Current {
                     controls.IsPlayEnabled()
                 }
                 .unwrap_or(false),
+            position_secs,
+            duration_secs,
         })
     }
 

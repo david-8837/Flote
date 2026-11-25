@@ -30,6 +30,7 @@ pub enum Target {
 }
 
 impl Target {
+    #[allow(dead_code)]
     fn delay(self) -> Duration {
         match self {
             Self::MenuBar => MENU_DWELL,

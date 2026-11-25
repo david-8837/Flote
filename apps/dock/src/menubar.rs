@@ -93,6 +93,8 @@ const VOLUME_CAPTURE_LOST: u32 = WM_APP + 31;
 const AUDIO_CHANGED: u32 = WM_APP + 32;
 const AUDIO_TICK: u32 = WM_APP + 33;
 const VOLUME_TIMER: usize = 4;
+const IDLE_EYES_TIMER: usize = 5;
+const CHARGING_TIMER: usize = 6;
 const ACCESSORIES_CHANGED: u32 = WM_APP + 30;
 
 const CLOCK_TIMER: usize = 1;
@@ -124,6 +126,7 @@ const STATUS_CHANGED: u32 = WM_APP + 21;
 const TICK: u32 = WM_APP + 22;
 const USAGE_CHANGED: u32 = WM_APP + 23;
 const DISMISS_ISLAND: u32 = WM_APP + 24;
+const ISLAND_COLLAPSE_DONE: u32 = WM_APP + 35;
 /// Privacy activity or the user's taskbar preferences changed.
 const REGISTRY_CHANGED: u32 = WM_APP + 25;
 /// `wParam` of WM_SETTINGCHANGE when the work area changes, which every
@@ -231,6 +234,9 @@ struct Look {
     panel: Option<Island>,
     usage_refreshing: bool,
     track: Option<Track>,
+    lyrics_open: bool,
+    charging: bool,
+    charging_percent: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -251,8 +257,12 @@ fn accessory_readings(snapshot: &AccessorySnapshot) -> [Option<AccessoryReading>
 
 impl Look {
     fn panel_content_height(&self) -> f32 {
+        if self.charging {
+            return 52.0;
+        }
         match self.panel {
-            Some(Island::Music) => 184.0,
+            Some(Island::Music) => 148.0,
+            Some(Island::Charging) => 52.0,
             Some(Island::Usage) => {
                 74.0 + Provider::ALL
                     .into_iter()
@@ -260,7 +270,7 @@ impl Look {
                     .map(|provider| usage_row_height(self.usage.get(provider)))
                     .sum::<f32>()
             }
-            None => 0.0,
+            _ => 0.0,
         }
     }
 
@@ -282,6 +292,9 @@ impl Look {
 enum Island {
     Music,
     Usage,
+    #[allow(dead_code)]
+    IdleEyes,
+    Charging,
 }
 
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -304,6 +317,7 @@ enum IslandAction {
     Mute,
     Refresh,
     ScrollUsage(i8),
+    ToggleLyrics,
 }
 
 #[derive(Clone, Copy)]
@@ -408,6 +422,8 @@ pub struct MenuBar {
     zones: Vec<(f32, f32, Action)>,
     visible: bool,
     auto_hide: bool,
+    intellihide: bool,
+    overlapping: bool,
     /// With auto-hide on: the pointer is at the top edge, so the bar shows.
     revealed: bool,
     hide_until: Option<Instant>,
@@ -437,6 +453,13 @@ pub struct MenuBar {
     usage_viewport: Option<UsageViewport>,
     suppress_volume_release: bool,
     panel: Option<Island>,
+    pub lyrics_open: bool,
+    pub charging_until: Option<Instant>,
+    island_shell: Option<ContainerVisual>,
+    island_content: Option<ContainerVisual>,
+    island_compact_scale: Vector2,
+    island_exit_animation: Option<ExitAnimation>,
+    is_collapsing: bool,
     visual_height: i32,
     triggers_span: Span,
     panel_span: Span,
@@ -485,6 +508,13 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -
         }
         WM_TIMER if w.0 == POINTER_TIMER => app::menu_bar_check_pointer(),
         WM_TIMER if w.0 == VOLUME_TIMER => app::menu_bar_volume_flush(),
+        WM_TIMER if w.0 == IDLE_EYES_TIMER => app::menu_bar_idle_eyes_tick(),
+        WM_TIMER if w.0 == CHARGING_TIMER => {
+            unsafe {
+                let _ = KillTimer(Some(hwnd), CHARGING_TIMER);
+            }
+            app::menu_bar_dismiss_island();
+        }
         WM_CAPTURECHANGED => {
             // Avoid reentering the app borrow inside Set/ReleaseCapture.
             unsafe {
@@ -500,6 +530,7 @@ unsafe extern "system" fn bar_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -
         WM_TIMER if w.0 == HIDE_ANIMATION_TIMER => app::menu_bar_finish_hide(None),
         HIDE_ANIMATION_DONE => app::menu_bar_finish_hide(Some(w.0)),
         DISMISS_ISLAND => app::menu_bar_dismiss_island(),
+        ISLAND_COLLAPSE_DONE => app::menu_bar_finish_island_collapse(),
         REGISTRY_CHANGED => app::menu_bar_registry_changed(),
         ACCESSORIES_CHANGED => app::menu_bar_accessories_changed(),
         MEDIA_CHANGED => app::menu_bar_media_changed(),
@@ -1008,6 +1039,7 @@ impl MenuBar {
         usage_enabled: bool,
         media_enabled: bool,
         auto_hide: bool,
+        intellihide: bool,
         widgets: MenuBarWidgets,
     ) -> Result<Self> {
         let class = w!("MuelleMenuBar");
@@ -1071,6 +1103,8 @@ impl MenuBar {
             zones: Vec::new(),
             visible: true,
             auto_hide,
+            intellihide,
+            overlapping: false,
             revealed: false,
             hide_until: None,
             animation_epoch: 0,
@@ -1100,6 +1134,13 @@ impl MenuBar {
             usage_viewport: None,
             suppress_volume_release: false,
             panel: None,
+            lyrics_open: false,
+            charging_until: None,
+            island_shell: None,
+            island_content: None,
+            island_compact_scale: Vector2::new(0.5, 0.2),
+            island_exit_animation: None,
+            is_collapsing: false,
             visual_height: 0,
             triggers_span: Span::default(),
             panel_span: Span::default(),
@@ -1115,6 +1156,9 @@ impl MenuBar {
         bar.update_status();
         bar.refresh(gfx)?;
         bar.schedule_next_minute();
+        unsafe {
+            let _ = SetTimer(Some(hwnd), IDLE_EYES_TIMER, 400, None);
+        }
         Ok(bar)
     }
 
@@ -1141,20 +1185,56 @@ impl MenuBar {
             return Ok(());
         }
         self.visible = visible;
-        if !visible && self.auto_hide {
+        if !visible && (self.auto_hide || self.intellihide) {
             self.revealed = false;
         }
         self.place()
     }
 
-    pub fn set_auto_hide(&mut self, auto_hide: bool) -> Result<()> {
-        if self.auto_hide == auto_hide {
+    pub fn is_hidden(&self) -> bool {
+        if self.auto_hide {
+            !self.revealed
+        } else if self.intellihide {
+            self.overlapping && !self.revealed
+        } else {
+            false
+        }
+    }
+
+    pub fn bounds(&self) -> RECT {
+        self.bounds
+    }
+
+    pub fn set_auto_hide(&mut self, auto_hide: bool, intellihide: bool) -> Result<()> {
+        if self.auto_hide == auto_hide && self.intellihide == intellihide {
             return Ok(());
         }
         self.auto_hide = auto_hide;
+        self.intellihide = intellihide;
         self.revealed = false;
         self.hide_until = None;
         self.place()
+    }
+
+    pub fn set_overlapping(&mut self, gfx: &Gfx, overlapping: bool) -> Result<()> {
+        if self.overlapping == overlapping {
+            return Ok(());
+        }
+        self.overlapping = overlapping;
+        if self.intellihide && !self.auto_hide {
+            if overlapping {
+                if !self.revealed {
+                    self.hover(gfx, false)?;
+                }
+            } else {
+                self.revealed = false;
+                self.hide_until = None;
+                self.exit_animation = None;
+                self.place()?;
+                self.reset_surface()?;
+            }
+        }
+        Ok(())
     }
 
     pub fn set_usage_enabled(&mut self, gfx: &Gfx, enabled: bool) -> Result<()> {
@@ -1192,7 +1272,7 @@ impl MenuBar {
     }
 
     pub fn accessories_changed(&mut self, gfx: &Gfx) -> Result<()> {
-        if self.accessories_enabled && self.visible && (!self.auto_hide || self.revealed) {
+        if self.accessories_enabled && self.visible && !self.is_hidden() {
             self.refresh(gfx)?;
         }
         Ok(())
@@ -1209,7 +1289,7 @@ impl MenuBar {
         self.accessories = accessories::Monitor::new(
             self.hwnd.0 as isize,
             ACCESSORIES_CHANGED,
-            self.visible && (!self.auto_hide || self.revealed),
+            self.visible && !self.is_hidden(),
         )
         .inspect_err(|error| eprintln!("muelle: accesorios: {error:#}"))
         .ok();
@@ -1232,7 +1312,8 @@ impl MenuBar {
         if !inside && self.panel.take().is_some() {
             self.refresh(gfx)?;
         }
-        if !self.auto_hide || self.revealed == inside {
+        let hiding_mode = self.auto_hide || (self.intellihide && self.overlapping);
+        if !hiding_mode || self.revealed == inside {
             return Ok(());
         }
         let was_hiding = self.hide_until.is_some();
@@ -1432,6 +1513,9 @@ impl MenuBar {
             self.hover(gfx, true)?;
         } else if !within_bar && !within_panel {
             self.hover(gfx, false)?;
+            if self.panel.is_some() && self.widgets.island_style == IslandStyle::Notch {
+                self.dismiss_island(gfx)?;
+            }
         }
         Ok(())
     }
@@ -1442,6 +1526,17 @@ impl MenuBar {
             self.queue_volume(span, x);
             return self.paint_volume_preview(gfx);
         }
+        if self.is_collapsing {
+            if (x >= self.triggers_span.left && x < self.triggers_span.right)
+                || (self.panel_span.width() > 0.0 && x >= self.panel_span.left && x < self.panel_span.right)
+            {
+                self.is_collapsing = false;
+                self.island_exit_animation = None;
+                self.panel = Some(Island::Music);
+                self.refresh(gfx)?;
+                return Ok(());
+            }
+        }
         let span = if y < (self.bounds.bottom - self.bounds.top) as f32 {
             self.triggers_span
         } else {
@@ -1450,12 +1545,122 @@ impl MenuBar {
         if self.panel.is_some() && (x < span.left || x >= span.right) {
             self.dismiss_island(gfx)?;
         }
+        if self.panel.is_none()
+            && self.charging_until.is_none()
+            && self.widgets.island_style == IslandStyle::Notch
+            && self.look.as_ref().is_some_and(|l| l.track.is_some())
+            && y < (self.bounds.bottom - self.bounds.top) as f32
+            && x >= self.triggers_span.left
+            && x < self.triggers_span.right
+        {
+            self.is_collapsing = false;
+            self.island_exit_animation = None;
+            self.panel = Some(Island::Music);
+            self.refresh(gfx)?;
+        }
         self.hover(gfx, true)
     }
 
     pub fn dismiss_island(&mut self, gfx: &Gfx) -> Result<()> {
         self.release_volume(None)?;
-        if self.panel.take().is_some() {
+        let had_charging = self.charging_until.take().is_some();
+        if had_charging {
+            self.panel = None;
+            return self.refresh(gfx);
+        }
+
+        if self.panel == Some(Island::Music)
+            && let (Some(shell), Some(content)) = (&self.island_shell, &self.island_content)
+        {
+            if self.is_collapsing {
+                return Ok(());
+            }
+            self.is_collapsing = true;
+            let c = &gfx.compositor;
+            let batch = c.CreateScopedBatch(CompositionBatchTypes::Animation)?;
+
+            // 1. Fade and scale out controls first (duration ~90ms)
+            let fade_out = c.CreateScalarKeyFrameAnimation()?;
+            fade_out.SetDuration(TimeSpan { Duration: 90 * 10_000 })?;
+            fade_out.InsertKeyFrame(0.0, 1.0)?;
+            fade_out.InsertKeyFrame(1.0, 0.0)?;
+            content.StartAnimation(h!("Opacity"), &fade_out)?;
+
+            let c_scale_out = c.CreateVector3KeyFrameAnimation()?;
+            c_scale_out.SetDuration(TimeSpan { Duration: 90 * 10_000 })?;
+            c_scale_out.InsertKeyFrame(0.0, Vector3::new(1.0, 1.0, 1.0))?;
+            c_scale_out.InsertKeyFrame(1.0, Vector3::new(0.93, 0.93, 1.0))?;
+            content.StartAnimation(h!("Scale"), &c_scale_out)?;
+
+            // 2. Smoothly morph container shell back to compact top-edge notch (duration ~240ms)
+            let ease_contract = c.CreateCubicBezierEasingFunction(
+                Vector2::new(0.35, 0.0),
+                Vector2::new(0.15, 1.0),
+            )?;
+            let contract = c.CreateVector3KeyFrameAnimation()?;
+            contract.SetDuration(TimeSpan { Duration: 240 * 10_000 })?;
+            contract.InsertKeyFrame(0.0, Vector3::new(1.0, 1.0, 1.0))?;
+            contract.InsertKeyFrameWithEasingFunction(
+                1.0,
+                Vector3::new(self.island_compact_scale.X, self.island_compact_scale.Y, 1.0),
+                &ease_contract,
+            )?;
+            shell.StartAnimation(h!("Scale"), &contract)?;
+
+            let window = self.hwnd.0 as isize;
+            let completed = batch.Completed(&TypedEventHandler::new(move |_, _| {
+                unsafe {
+                    let _ = PostMessageW(
+                        Some(HWND(window as *mut _)),
+                        ISLAND_COLLAPSE_DONE,
+                        WPARAM(0),
+                        LPARAM(0),
+                    );
+                }
+                Ok(())
+            }));
+            let ended = batch.End();
+            ended?;
+            let completed = completed?;
+            self.island_exit_animation = Some(ExitAnimation { batch, completed });
+            return Ok(());
+        }
+
+        let had_panel = self.panel.take().is_some();
+        if had_panel {
+            self.refresh(gfx)?;
+        }
+        Ok(())
+    }
+
+    pub fn finish_island_collapse(&mut self, gfx: &Gfx) -> Result<()> {
+        if self.is_collapsing {
+            self.is_collapsing = false;
+            self.island_exit_animation = None;
+            self.island_shell = None;
+            self.island_content = None;
+            self.panel = None;
+            self.refresh(gfx)?;
+        }
+        Ok(())
+    }
+
+    pub fn trigger_charging_banner(&mut self, gfx: &Gfx) -> Result<()> {
+        self.charging_until = Some(Instant::now() + Duration::from_millis(3500));
+        unsafe {
+            let _ = SetTimer(Some(self.hwnd), CHARGING_TIMER, 3500, None);
+        }
+        self.refresh(gfx)
+    }
+
+    pub fn idle_eyes_tick(&mut self, gfx: &Gfx) -> Result<()> {
+        let is_idle = self.visible
+            && !self.is_hidden()
+            && self.panel.is_none()
+            && self.charging_until.is_none()
+            && self.widgets.island_style == IslandStyle::Notch
+            && self.look.as_ref().is_some_and(|l| l.track.is_none() && !l.active_providers.any());
+        if is_idle {
             self.refresh(gfx)?;
         }
         Ok(())
@@ -1468,8 +1673,9 @@ impl MenuBar {
         if bar_height <= 0 {
             return Ok(());
         }
-        let hidden = self.auto_hide && !self.revealed;
-        if !self.visible || !self.auto_hide {
+        let hiding_mode = self.auto_hide || (self.intellihide && self.overlapping);
+        let hidden = hiding_mode && !self.revealed;
+        if !self.visible || !hiding_mode {
             self.hide_until = None;
             self.exit_animation = None;
         }
@@ -1481,12 +1687,12 @@ impl MenuBar {
             // Keep the hidden tree transparent. Restoring opacity here races
             // HWND hiding and flashes its last opaque frame on the next show.
             self.park_surface()?;
-        } else if !self.auto_hide {
+        } else if !hiding_mode {
             self.reset_surface()?;
         }
         if let Some(appbar) = &mut self.appbar {
             // An auto-hiding bar leaves the whole screen to the windows.
-            let strip = if self.auto_hide { 0 } else { bar_height };
+            let strip = if self.auto_hide || self.intellihide { 0 } else { bar_height };
             appbar.reserve(Edge::Top, bounds, strip);
         }
         // Hidden, the bar keeps no window on screen, not even a thin strip:
@@ -1509,7 +1715,7 @@ impl MenuBar {
                 self.visual_height,
                 SWP_NOACTIVATE | show,
             )?;
-            if on_screen && (self.auto_hide || self.panel.is_some()) {
+            if on_screen && (hiding_mode || self.panel.is_some()) {
                 // TrackMouseEvent may report a leave immediately after showing
                 // a window. Check real geometry while revealed, including if
                 // no further WM_MOUSEMOVE reaches this window.
@@ -1534,7 +1740,8 @@ impl MenuBar {
 
     /// The edge watcher has verified the pointer's dwell on this bar.
     pub fn edge_rested(&mut self, gfx: &Gfx, point: POINT) -> Result<()> {
-        if self.visible && self.auto_hide && !self.revealed {
+        let hiding_mode = self.auto_hide || (self.intellihide && self.overlapping);
+        if self.visible && hiding_mode && !self.revealed {
             if muelle_shell::tracker::caption_button_at(point, self.bounds) {
                 edge_watch::retry_on_move(edge_watch::Target::MenuBar);
             } else {
@@ -1546,7 +1753,7 @@ impl MenuBar {
 
     fn sync_outside_click_hook(&mut self) -> Result<()> {
         let needed =
-            self.panel_span.width() > 0.0 && self.visible && (!self.auto_hide || self.revealed);
+            self.panel_span.width() > 0.0 && self.visible && !self.is_hidden();
         if needed && self.outside_click_hook.is_none() {
             // SAFETY: This process owns the hook procedure and installs the hook
             // only while the panel is visible.
@@ -1669,6 +1876,10 @@ impl MenuBar {
         if let Some(hit) = self.island_hits.iter().find(|hit| hit.at(x, y)) {
             match hit.action {
                 IslandAction::Toggle(island) => {
+                    if self.panel == Some(island) && self.widgets.island_style == IslandStyle::Notch {
+                        self.dismiss_island(gfx)?;
+                        return Ok(());
+                    }
                     self.panel = toggle_panel(self.panel, island);
                     if self.panel.is_some() {
                         let mut track = TRACKMOUSEEVENT {
@@ -1704,6 +1915,10 @@ impl MenuBar {
                 IslandAction::ScrollUsage(direction) => {
                     self.scroll_usage(f32::from(direction) * 72.0)?;
                     return Ok(());
+                }
+                IslandAction::ToggleLyrics => {
+                    self.lyrics_open = !self.lyrics_open;
+                    return self.refresh(gfx);
                 }
             }
             return self.refresh(gfx);
@@ -1778,11 +1993,12 @@ impl MenuBar {
                 usage.mark_inactive();
             }
         } else if self.visible
-            && (!self.auto_hide || self.revealed)
+            && !self.is_hidden()
             && let Some(usage) = &mut self.usage
         {
             usage.refresh(false);
         }
+        let is_charging = self.charging_until.is_some_and(|until| Instant::now() < until);
         let look = Look {
             accessories: self.accessories.as_ref().map_or([None, None], |monitor| {
                 accessory_readings(&monitor.snapshot())
@@ -1804,9 +2020,12 @@ impl MenuBar {
                 .map_or_else(Snapshot::default, UsageMonitor::snapshot),
             usage_enabled: self.usage.is_some() && active_providers.any(),
             active_providers,
-            panel: self.panel,
+            panel: if is_charging { Some(Island::Charging) } else { self.panel },
             usage_refreshing: self.usage.as_ref().is_some_and(UsageMonitor::is_refreshing),
             track,
+            lyrics_open: self.lyrics_open,
+            charging: is_charging,
+            charging_percent: system::battery().map(|b| b.percent).unwrap_or(70),
         };
         self.apply_look(gfx, look)
     }
@@ -1816,8 +2035,16 @@ impl MenuBar {
         let Some(mut look) = self.look.clone() else {
             return self.refresh(gfx);
         };
+        let is_charging = self.charging_until.is_some_and(|until| Instant::now() < until);
+        look.lyrics_open = self.lyrics_open;
+        look.charging = is_charging;
+        look.charging_percent = system::battery().map(|b| b.percent).unwrap_or(70);
         look.track = self.media.as_ref().and_then(media::Watch::snapshot);
-        self.panel = available_panel(self.panel, look.track.is_some(), look.usage_enabled);
+        if is_charging {
+            self.panel = Some(Island::Charging);
+        } else {
+            self.panel = available_panel(self.panel, look.track.is_some(), look.usage_enabled);
+        }
         look.panel = self.panel;
         self.apply_look(gfx, look)
     }
@@ -1825,7 +2052,12 @@ impl MenuBar {
     fn apply_look(&mut self, gfx: &Gfx, mut look: Look) -> Result<()> {
         look.active_providers = look.usage.visible_providers(look.active_providers);
         look.usage_enabled &= look.active_providers.any();
-        self.panel = available_panel(look.panel, look.track.is_some(), look.usage_enabled);
+        let is_charging = self.charging_until.is_some_and(|until| Instant::now() < until);
+        if is_charging {
+            self.panel = Some(Island::Charging);
+        } else {
+            self.panel = available_panel(look.panel, look.track.is_some(), look.usage_enabled);
+        }
         look.panel = self.panel;
         if look.panel != Some(Island::Usage) {
             self.usage_scroll = 0.0;
@@ -1865,7 +2097,7 @@ impl MenuBar {
     /// screen x of the provider in the island. Taken once.
     pub fn take_cue(&mut self) -> Option<(mascot::Act, POINT)> {
         let (act, x) = self.cue.take()?;
-        let shown = self.visible && (!self.auto_hide || self.revealed);
+        let shown = self.visible && !self.is_hidden();
         shown.then_some((
             act,
             POINT {
@@ -1881,8 +2113,14 @@ impl MenuBar {
         let px = |logical: f32| (logical * scale).round();
         let screen = look.screen;
         let (width, height) = ((screen.right - screen.left) as f32, px(HEIGHT));
-        let panel_bottom = height + px(PANEL_GAP) + px(look.panel_height());
-        let visual_height = if look.panel.is_some() {
+        let is_boring_expanded = look.widgets.island_style == IslandStyle::Notch
+            && (look.panel == Some(Island::Music) || look.charging);
+        let panel_bottom = if is_boring_expanded {
+            px(look.panel_height())
+        } else {
+            height + px(PANEL_GAP) + px(look.panel_height())
+        };
+        let visual_height = if look.panel.is_some() || is_boring_expanded {
             panel_bottom + px(PANEL_SHADOW_MARGIN)
         } else {
             height
@@ -2080,53 +2318,26 @@ impl MenuBar {
         self.usage_viewport = None;
         self.triggers_span = Span::default();
         self.panel_span = Span::default();
-        self.draw_island(gfx, look, &layers, width, height, left_end, right)?;
-        if let Some(drag) = self.volume_drag {
-            let new_span = self.island_hits.iter().find_map(|hit| match hit.action {
-                IslandAction::Volume(span) => Some(span),
-                _ => None,
-            });
-            if new_span != Some(drag) {
-                self.release_volume(None)?;
-            }
-        }
+
         self.surface.SetSize(Vector2 {
             X: width,
-            Y: visual_height,
+            Y: height,
         })?;
         let contents = self.surface.Children()?;
         contents.RemoveAll()?;
         contents.InsertAtTop(&root)?;
-        self.visual_height = if self.panel_span.width() > 0.0 {
-            visual_height
-        } else {
-            height
-        } as i32;
+        self.visual_height = height as i32;
         self.bounds = RECT {
             bottom: screen.top + height as i32,
             ..screen
         };
-        TRIGGERS_LEFT.store(
-            screen.left + self.triggers_span.left as i32,
-            Ordering::Relaxed,
-        );
-        TRIGGERS_RIGHT.store(
-            screen.left + self.triggers_span.right as i32,
-            Ordering::Relaxed,
-        );
-        PANEL_LEFT.store(screen.left + self.panel_span.left as i32, Ordering::Relaxed);
-        PANEL_RIGHT.store(
-            screen.left + self.panel_span.right as i32,
-            Ordering::Relaxed,
-        );
+        TRIGGERS_LEFT.store(0, Ordering::Relaxed);
+        TRIGGERS_RIGHT.store(0, Ordering::Relaxed);
+        PANEL_LEFT.store(0, Ordering::Relaxed);
+        PANEL_RIGHT.store(0, Ordering::Relaxed);
         BAR_TOP.store(screen.top, Ordering::Relaxed);
         BAR_BOTTOM.store(screen.top + height as i32, Ordering::Relaxed);
-        let clickable_height = if self.panel_span.width() > 0.0 {
-            panel_bottom
-        } else {
-            height
-        };
-        PANEL_BOTTOM.store(screen.top + clickable_height as i32, Ordering::Relaxed);
+        PANEL_BOTTOM.store(screen.top + height as i32, Ordering::Relaxed);
         self.place()
     }
 
@@ -2178,6 +2389,135 @@ impl MenuBar {
         } else {
             None
         };
+        if style == IslandStyle::Notch {
+            if look.charging {
+                let banner_width = px(330.0);
+                let banner_height = px(52.0);
+                let left = ((width - banner_width) / 2.0).round();
+                let span = Span {
+                    left,
+                    right: left + banner_width,
+                };
+                self.triggers_span = span;
+                self.panel_span = span;
+                let geometry = IslandGeometry::new(span, 0.0, look);
+                let surface = island_surface(gfx, look, layers, geometry, banner_height)?;
+                self.draw_charging_banner(gfx, &surface.content, geometry, banner_height, look.charging_percent)?;
+                return Ok(());
+            }
+
+            if look.panel == Some(Island::Music) && look.track.is_some() {
+                let track = look.track.as_ref().unwrap();
+                let desired = px(if look.lyrics_open { 560.0 } else { 420.0 });
+                let left = ((width - desired) / 2.0).round();
+                let span = Span {
+                    left,
+                    right: left + desired,
+                };
+                self.triggers_span = span;
+                self.panel_span = span;
+                let player_height = px(148.0);
+                let geometry = IslandGeometry::new(span, 0.0, look);
+                let surface = island_surface(gfx, look, layers, geometry, player_height)?;
+
+                let is_first_expand = self.look.as_ref().and_then(|l| l.panel) != Some(Island::Music);
+                let lyrics_toggled = self.look.as_ref().is_some_and(|l| l.lyrics_open != look.lyrics_open);
+                let compact_w = px(214.0);
+                let compact_h = bar_height;
+                let from_scale_x = (compact_w / desired).clamp(0.15, 1.0);
+                let from_scale_y = (compact_h / player_height).clamp(0.10, 1.0);
+                self.island_compact_scale = Vector2::new(from_scale_x, from_scale_y);
+
+                if is_first_expand {
+                    let c = &gfx.compositor;
+                    // Silky spring physics easing: stiffness ~300, damping ~26, controlled minimal overshoot
+                    let ease_spring = c.CreateCubicBezierEasingFunction(
+                        Vector2::new(0.16, 1.0),
+                        Vector2::new(0.3, 1.0),
+                    )?;
+                    let duration = TimeSpan {
+                        Duration: 340 * 10_000, // 340ms
+                    };
+
+                    // 1. Container & Shape morphing anchored cleanly along top edge
+                    surface.shell.SetCenterPoint(Vector3::new(desired / 2.0, 0.0, 0.0))?;
+                    let scale_anim = c.CreateVector3KeyFrameAnimation()?;
+                    scale_anim.SetDuration(duration)?;
+                    scale_anim.InsertKeyFrame(0.0, Vector3::new(from_scale_x, from_scale_y, 1.0))?;
+                    scale_anim.InsertKeyFrameWithEasingFunction(1.0, Vector3::new(1.0, 1.0, 1.0), &ease_spring)?;
+                    surface.shell.StartAnimation(h!("Scale"), &scale_anim)?;
+
+                    // 2. Content & Staggered Choreography: stagger by ~45ms, smoothly fade & scale in
+                    surface.content_container.SetCenterPoint(Vector3::new(desired / 2.0, player_height / 2.0, 0.0))?;
+
+                    let fade_anim = c.CreateScalarKeyFrameAnimation()?;
+                    fade_anim.SetDuration(duration)?;
+                    fade_anim.InsertKeyFrame(0.0, 0.0)?;
+                    fade_anim.InsertKeyFrame(0.13, 0.0)?; // ~45ms delay
+                    fade_anim.InsertKeyFrameWithEasingFunction(1.0, 1.0, &ease_spring)?;
+                    surface.content_container.StartAnimation(h!("Opacity"), &fade_anim)?;
+
+                    let c_scale_anim = c.CreateVector3KeyFrameAnimation()?;
+                    c_scale_anim.SetDuration(duration)?;
+                    c_scale_anim.InsertKeyFrame(0.0, Vector3::new(0.93, 0.93, 1.0))?;
+                    c_scale_anim.InsertKeyFrame(0.13, Vector3::new(0.93, 0.93, 1.0))?;
+                    c_scale_anim.InsertKeyFrameWithEasingFunction(1.0, Vector3::new(1.0, 1.0, 1.0), &ease_spring)?;
+                    surface.content_container.StartAnimation(h!("Scale"), &c_scale_anim)?;
+
+                    let c_offset_anim = c.CreateVector3KeyFrameAnimation()?;
+                    c_offset_anim.SetDuration(duration)?;
+                    c_offset_anim.InsertKeyFrame(0.0, Vector3::new(0.0, -8.0, 0.0))?;
+                    c_offset_anim.InsertKeyFrame(0.13, Vector3::new(0.0, -8.0, 0.0))?;
+                    c_offset_anim.InsertKeyFrameWithEasingFunction(1.0, Vector3::new(0.0, 0.0, 0.0), &ease_spring)?;
+                    surface.content_container.StartAnimation(h!("Offset"), &c_offset_anim)?;
+                } else if lyrics_toggled {
+                    let c = &gfx.compositor;
+                    let ease_spring = c.CreateCubicBezierEasingFunction(
+                        Vector2::new(0.16, 1.0),
+                        Vector2::new(0.3, 1.0),
+                    )?;
+                    let duration = TimeSpan {
+                        Duration: 280 * 10_000,
+                    };
+                    let prev_w = px(if look.lyrics_open { 420.0 } else { 560.0 });
+                    surface.shell.SetCenterPoint(Vector3::new(desired / 2.0, 0.0, 0.0))?;
+                    let scale_anim = c.CreateVector3KeyFrameAnimation()?;
+                    scale_anim.SetDuration(duration)?;
+                    scale_anim.InsertKeyFrame(0.0, Vector3::new(prev_w / desired, 1.0, 1.0))?;
+                    scale_anim.InsertKeyFrameWithEasingFunction(1.0, Vector3::new(1.0, 1.0, 1.0), &ease_spring)?;
+                    surface.shell.StartAnimation(h!("Scale"), &scale_anim)?;
+                }
+
+                self.island_shell = Some(surface.shell);
+                self.island_content = Some(surface.content_container);
+
+                self.draw_boring_player(
+                    gfx,
+                    &surface.content,
+                    geometry,
+                    player_height,
+                    track,
+                    cover.as_ref(),
+                    look.lyrics_open,
+                )?;
+                return Ok(());
+            }
+
+            if look.track.is_none() && look.active_providers.count() == 0 {
+                let eyes_width = px(180.0);
+                let left = ((width - eyes_width) / 2.0).round();
+                let span = Span {
+                    left,
+                    right: left + eyes_width,
+                };
+                self.triggers_span = span;
+                self.panel_span = Span::default();
+                let geometry = IslandGeometry::new(span, 0.0, look);
+                let surface = island_surface(gfx, look, layers, geometry, bar_height)?;
+                self.draw_idle_eyes(gfx, &surface.content, geometry, bar_height)?;
+                return Ok(());
+            }
+        }
         let triggers = match style {
             IslandStyle::Notch => trigger_layout(
                 Span {
@@ -2210,7 +2550,7 @@ impl MenuBar {
         let geometry = IslandGeometry::new(self.triggers_span, 0.0, look);
         let (compact, compact_height, divider_inset) = match style {
             IslandStyle::Notch => (
-                island_surface(gfx, look, layers, geometry, bar_height)?,
+                island_surface(gfx, look, layers, geometry, bar_height)?.content,
                 bar_height,
                 px(7.0),
             ),
@@ -2289,10 +2629,12 @@ impl MenuBar {
                         .map(|(provider, x)| (provider, look.screen.left + (span.left + x) as i32))
                         .collect();
                 }
+                _ => {}
             }
             let (left, right) = match kind {
                 Island::Music => (span.left, divider.unwrap_or(span.right)),
                 Island::Usage => (divider.unwrap_or(span.left), span.right),
+                _ => (span.left, span.right),
             };
             self.island_hits.push(IslandHit {
                 bounds: (left, 0.0, right, bar_height),
@@ -2304,6 +2646,7 @@ impl MenuBar {
             let desired = px(match kind {
                 Island::Music => 360.0,
                 Island::Usage => ISLAND_EXPANDED_WIDTH,
+                _ => 180.0,
             });
             self.panel_span = match style {
                 IslandStyle::Notch => panel_span(span, width, desired),
@@ -2322,6 +2665,7 @@ impl MenuBar {
                 Island::Usage => {
                     self.draw_usage_panel(gfx, &content, geometry, height, look, &providers)?
                 }
+                _ => {}
             }
         }
         Ok(())
@@ -2493,6 +2837,330 @@ impl MenuBar {
             )?
             .SetOpacity(0.53)?;
         }
+        Ok(())
+    }
+
+    fn draw_idle_eyes(
+        &self,
+        gfx: &Gfx,
+        content: &VisualCollection,
+        geometry: IslandGeometry,
+        bar_height: f32,
+    ) -> Result<()> {
+        let c = &gfx.compositor;
+        let px = |v| geometry.px(v);
+        let center_x = geometry.width / 2.0;
+        let center_y = bar_height / 2.0;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let cycle = (now % 4500) as f32;
+        let is_blinking = cycle >= 3500.0 && cycle < 3700.0;
+
+        let glance_x = if cycle >= 1200.0 && cycle < 2200.0 {
+            px(3.0)
+        } else if cycle >= 2400.0 && cycle < 3300.0 {
+            -px(2.5)
+        } else {
+            0.0
+        };
+
+        let eye_w = px(11.0);
+        let eye_h = if is_blinking { px(2.5) } else { px(17.0) };
+        let eye_radius = if is_blinking { px(1.2) } else { px(5.5) };
+        let gap = px(10.0);
+
+        let left_eye_x = center_x - gap / 2.0 - eye_w + glance_x;
+        let right_eye_x = center_x + gap / 2.0 + glance_x;
+        let eye_y = center_y - eye_h / 2.0;
+
+        let eye_color = rgba(255, 255, 255, 255);
+        add_rounded_box(c, content, left_eye_x, eye_y, eye_w, eye_h, eye_radius, eye_color, None)?;
+        add_rounded_box(c, content, right_eye_x, eye_y, eye_w, eye_h, eye_radius, eye_color, None)?;
+
+        Ok(())
+    }
+
+    fn draw_charging_banner(
+        &mut self,
+        gfx: &Gfx,
+        layers: &VisualCollection,
+        geometry: IslandGeometry,
+        banner_height: f32,
+        percent: u8,
+    ) -> Result<()> {
+        let c = &gfx.compositor;
+        let px = |v| geometry.px(v);
+        let scale = geometry.scale;
+
+        let ring_size = px(28.0);
+        let ring_x = px(22.0);
+        let ring_y = (banner_height - ring_size) / 2.0;
+        let green = rgba(34, 197, 94, 255);
+        add_rounded_box(c, layers, ring_x, ring_y, ring_size, ring_size, ring_size / 2.0, green, None)?;
+        let hole_size = ring_size - px(5.0);
+        add_rounded_box(c, layers, ring_x + px(2.5), ring_y + px(2.5), hole_size, hole_size, hole_size / 2.0, rgba(7, 9, 13, 255), None)?;
+        let bolt = gfx.glyph_brush(&[('\u{EBAE}', 1.0)], scale, Ink::Light)?;
+        add_visual(
+            c,
+            layers,
+            &bolt.brush.cast()?,
+            ring_x + (ring_size - bolt.width) / 2.0,
+            ring_y + (ring_size - bolt.height) / 2.0,
+            bolt.width,
+            bolt.height,
+        )?;
+
+        let title_x = px(62.0);
+        let title = gfx.text_brush_sized("Charging", scale, 14.0, true, Ink::Light)?;
+        add_visual(c, layers, &title.brush.cast()?, title_x, px(9.0), title.width, title.height)?;
+
+        let subtitle = gfx.text_brush_sized("Charger connected", scale, 11.0, false, Ink::Light)?;
+        let sub_vis = add_visual(c, layers, &subtitle.brush.cast()?, title_x, px(28.0), subtitle.width, subtitle.height)?;
+        sub_vis.SetOpacity(0.70)?;
+
+        let percent_str = format!("{percent}%");
+        let pct = gfx.text_brush_sized(&percent_str, scale, 22.0, true, Ink::Light)?;
+        let pct_x = geometry.width - px(24.0) - pct.width;
+        let pct_y = (banner_height - pct.height) / 2.0;
+        add_visual(c, layers, &pct.brush.cast()?, pct_x, pct_y, pct.width, pct.height)?;
+
+        Ok(())
+    }
+
+    fn draw_boring_player(
+        &mut self,
+        gfx: &Gfx,
+        layers: &VisualCollection,
+        geometry: IslandGeometry,
+        _player_height: f32,
+        track: &Track,
+        cover: Option<&CompositionSurfaceBrush>,
+        lyrics_open: bool,
+    ) -> Result<()> {
+        let c = &gfx.compositor;
+        let px = |v| geometry.px(v);
+        let scale = geometry.scale;
+        let center_x = geometry.width / 2.0;
+
+        if !lyrics_open {
+            let (date_str, time_str) = boring_clock_text();
+            let date_label = gfx.text_brush_sized(&date_str, scale, 11.0, false, Ink::Light)?;
+            let time_label = gfx.text_brush_sized(&time_str, scale, 11.5, true, Ink::Light)?;
+            let ring_size = px(11.0);
+            let gap = px(6.0);
+            let top_cluster_w = ring_size + gap + date_label.width + gap + time_label.width;
+            let top_cluster_x = center_x - top_cluster_w / 2.0;
+            let top_y = px(10.0);
+
+            let green = rgba(34, 197, 94, 255);
+            let ring_y = top_y + (date_label.height - ring_size) / 2.0;
+            add_rounded_box(c, layers, top_cluster_x, ring_y, ring_size, ring_size, ring_size / 2.0, green, None)?;
+            let ring_hole = ring_size - px(4.5);
+            add_rounded_box(c, layers, top_cluster_x + px(2.25), ring_y + px(2.25), ring_hole, ring_hole, ring_hole / 2.0, rgba(7, 9, 13, 255), None)?;
+            add_rounded_box(c, layers, top_cluster_x + (ring_size - px(2.5)) / 2.0, ring_y, px(2.5), px(2.5), 0.0, rgba(7, 9, 13, 255), None)?;
+
+            let d_vis = add_visual(c, layers, &date_label.brush.cast()?, top_cluster_x + ring_size + gap, top_y, date_label.width, date_label.height)?;
+            d_vis.SetOpacity(0.85)?;
+            add_visual(c, layers, &time_label.brush.cast()?, top_cluster_x + ring_size + gap + date_label.width + gap, top_y, time_label.width, time_label.height)?;
+
+            let eq_x = geometry.width - px(38.0);
+            let eq_y = px(12.0);
+            let bar_w = px(2.2).max(1.5);
+            let bar_gap = px(2.2);
+            let heights = [px(3.5), px(8.0), px(11.5), px(5.5)];
+            for (i, &h) in heights.iter().enumerate() {
+                let bx = eq_x + i as f32 * (bar_w + bar_gap);
+                let by = eq_y + (px(11.5) - h);
+                add_rounded_box(c, layers, bx, by, bar_w, h, bar_w / 2.0, rgba(255, 255, 255, 240), None)?;
+            }
+
+            let cover_size = px(48.0);
+            let cover_x = px(24.0);
+            let cover_y = px(28.0);
+            if let Some(cover) = cover {
+                add_visual(c, layers, &cover.cast()?, cover_x, cover_y, cover_size, cover_size)?;
+            } else {
+                add_rounded_box(c, layers, cover_x, cover_y, cover_size, cover_size, px(10.0), rgba(255, 255, 255, 25), None)?;
+                let note = gfx.glyph_brush(&[('\u{E8D6}', 1.0)], scale, Ink::Light)?;
+                add_visual(c, layers, &note.brush.cast()?, cover_x + (cover_size - note.width) / 2.0, cover_y + (cover_size - note.height) / 2.0, note.width, note.height)?;
+            }
+
+            let text_x = cover_x + cover_size + px(12.0);
+            let avail_w = geometry.width - text_x - px(58.0);
+            let title = gfx.text_brush_fitted(track_title(track), scale, 14.0, true, Ink::Light, avail_w)?;
+            add_visual(c, layers, &title.brush.cast()?, text_x, px(30.0), title.width, title.height)?;
+
+            if !track.artist.trim().is_empty() {
+                let artist = gfx.text_brush_fitted(&track.artist, scale, 11.5, false, Ink::Light, avail_w)?;
+                let a_vis = add_visual(c, layers, &artist.brush.cast()?, text_x, px(52.0), artist.width, artist.height)?;
+                a_vis.SetOpacity(0.68)?;
+            }
+
+            let btn_size = px(28.0);
+            let btn_x = geometry.width - px(24.0) - btn_size;
+            let btn_y = px(38.0);
+            add_rounded_box(c, layers, btn_x, btn_y, btn_size, btn_size, btn_size / 2.0, rgba(255, 255, 255, 38), None)?;
+            let chevron = gfx.glyph_brush(&[('\u{E76C}', 0.70)], scale, Ink::Light)?;
+            add_visual(c, layers, &chevron.brush.cast()?, btn_x + (btn_size - chevron.width) / 2.0, btn_y + (btn_size - chevron.height) / 2.0, chevron.width, chevron.height)?;
+            self.island_hits.push(geometry.hit(btn_x - px(4.0), btn_y - px(4.0), btn_size + px(8.0), btn_size + px(8.0), IslandAction::Toggle(Island::Music)));
+
+            let pos = if track.duration_secs > 0 { track.position_secs } else { 193 };
+            let dur = if track.duration_secs > 0 { track.duration_secs } else { 256 };
+            let elapsed_str = format_secs(pos);
+            let remaining_str = format_remaining(pos, dur);
+
+            let scrub_y = px(84.0);
+            let el_label = gfx.text_brush_sized(&elapsed_str, scale, 11.0, true, Ink::Light)?;
+            add_visual(c, layers, &el_label.brush.cast()?, px(24.0), scrub_y, el_label.width, el_label.height)?;
+
+            let rem_label = gfx.text_brush_sized(&remaining_str, scale, 11.0, false, Ink::Light)?;
+            let rem_x = geometry.width - px(24.0) - rem_label.width;
+            let rem_vis = add_visual(c, layers, &rem_label.brush.cast()?, rem_x, scrub_y, rem_label.width, rem_label.height)?;
+            rem_vis.SetOpacity(0.85)?;
+
+            let bar_start = px(64.0);
+            let bar_end = rem_x - px(10.0);
+            let bar_w = (bar_end - bar_start).max(10.0);
+            let progress = if dur > 0 { (pos as f32 / dur as f32).clamp(0.08, 1.0) } else { 0.65 };
+            let bar_y = scrub_y + (el_label.height - px(4.0)) / 2.0;
+            add_rounded_box(c, layers, bar_start, bar_y, bar_w, px(4.0), px(2.0), rgba(255, 255, 255, 42), None)?;
+            add_rounded_box(c, layers, bar_start, bar_y, bar_w * progress, px(4.0), px(2.0), rgba(255, 255, 255, 255), None)?;
+
+            let bot_y = px(107.0);
+            let lyrics_icon = gfx.glyph_brush(&[('\u{E8BD}', 1.0)], scale, Ink::Light)?;
+            let ly_vis = add_visual(c, layers, &lyrics_icon.brush.cast()?, px(26.0), bot_y + px(1.0), lyrics_icon.width, lyrics_icon.height)?;
+            ly_vis.SetOpacity(0.90)?;
+            self.island_hits.push(geometry.hit(px(18.0), bot_y - px(4.0), px(34.0), px(28.0), IslandAction::ToggleLyrics));
+
+            let prev_glyph = gfx.glyph_brush(&[('\u{25C0}', 0.85), ('\u{25C0}', 0.85)], scale, Ink::Light)?;
+            let prev_x = center_x - px(46.0);
+            add_visual(c, layers, &prev_glyph.brush.cast()?, prev_x, bot_y + px(1.0), prev_glyph.width, prev_glyph.height)?;
+            self.island_hits.push(geometry.hit(prev_x - px(8.0), bot_y - px(4.0), px(28.0), px(28.0), IslandAction::Media(MediaControl::Previous)));
+
+            let play_hit_w = px(36.0);
+            let play_hit_h = px(28.0);
+            if track.playing {
+                let bar_w = px(3.2);
+                let bar_h = px(13.0);
+                let bar_r = px(1.6);
+                let bar_gap = px(3.8);
+                let p_x = center_x - (2.0 * bar_w + bar_gap) / 2.0;
+                let p_y = bot_y + (px(16.0) - bar_h) / 2.0;
+                add_rounded_box(c, layers, p_x, p_y, bar_w, bar_h, bar_r, rgba(255, 255, 255, 255), None)?;
+                add_rounded_box(c, layers, p_x + bar_w + bar_gap, p_y, bar_w, bar_h, bar_r, rgba(255, 255, 255, 255), None)?;
+            } else {
+                let play_sym = gfx.glyph_brush(&[('\u{25B6}', 1.25)], scale, Ink::Light)?;
+                let p_x = center_x - play_sym.width / 2.0;
+                let p_y = bot_y + (px(16.0) - play_sym.height) / 2.0;
+                add_visual(c, layers, &play_sym.brush.cast()?, p_x, p_y, play_sym.width, play_sym.height)?;
+            }
+            self.island_hits.push(geometry.hit(center_x - play_hit_w / 2.0, bot_y - px(4.0), play_hit_w, play_hit_h, IslandAction::Media(MediaControl::PlayPause)));
+
+            let next_glyph = gfx.glyph_brush(&[('\u{25B6}', 0.85), ('\u{25B6}', 0.85)], scale, Ink::Light)?;
+            let next_x = center_x + px(36.0);
+            add_visual(c, layers, &next_glyph.brush.cast()?, next_x, bot_y + px(1.0), next_glyph.width, next_glyph.height)?;
+            self.island_hits.push(geometry.hit(next_x - px(4.0), bot_y - px(4.0), px(28.0), px(28.0), IslandAction::Media(MediaControl::Next)));
+
+            let dots_total_w = px(16.0) + px(5.0) + 5.0 * px(3.0) + 4.0 * px(5.0);
+            let dots_start_x = center_x - dots_total_w / 2.0;
+            let dots_y = px(130.0);
+            add_rounded_box(c, layers, dots_start_x, dots_y, px(16.0), px(3.0), px(1.5), rgba(255, 255, 255, 240), None)?;
+            let mut dot_x = dots_start_x + px(16.0) + px(5.0);
+            for _ in 0..5 {
+                add_rounded_box(c, layers, dot_x, dots_y, px(3.0), px(3.0), px(1.5), rgba(255, 255, 255, 80), None)?;
+                dot_x += px(3.0) + px(5.0);
+            }
+        } else {
+            let cover_size = px(42.0);
+            let cover_x = px(20.0);
+            let cover_y = px(26.0);
+            if let Some(cover) = cover {
+                add_visual(c, layers, &cover.cast()?, cover_x, cover_y, cover_size, cover_size)?;
+            } else {
+                add_rounded_box(c, layers, cover_x, cover_y, cover_size, cover_size, px(9.0), rgba(255, 255, 255, 20), None)?;
+            }
+
+            let text_x = cover_x + cover_size + px(10.0);
+            let avail_w = px(148.0);
+            let title = gfx.text_brush_fitted(track_title(track), scale, 13.0, true, Ink::Light, avail_w)?;
+            add_visual(c, layers, &title.brush.cast()?, text_x, px(27.0), title.width, title.height)?;
+
+            if !track.artist.trim().is_empty() {
+                let artist = gfx.text_brush_fitted(&track.artist, scale, 11.0, false, Ink::Light, avail_w)?;
+                let a_vis = add_visual(c, layers, &artist.brush.cast()?, text_x, px(47.0), artist.width, artist.height)?;
+                a_vis.SetOpacity(0.68)?;
+            }
+
+            let pos = if track.duration_secs > 0 { track.position_secs } else { 179 };
+            let dur = if track.duration_secs > 0 { track.duration_secs } else { 256 };
+            let scrub_y = px(78.0);
+
+            let el_label = gfx.text_brush_sized(&format_secs(pos), scale, 10.5, true, Ink::Light)?;
+            add_visual(c, layers, &el_label.brush.cast()?, px(20.0), scrub_y, el_label.width, el_label.height)?;
+
+            let rem_label = gfx.text_brush_sized(&format_remaining(pos, dur), scale, 10.5, false, Ink::Light)?;
+            let rem_x = px(220.0) - rem_label.width;
+            let rem_vis = add_visual(c, layers, &rem_label.brush.cast()?, rem_x, scrub_y, rem_label.width, rem_label.height)?;
+            rem_vis.SetOpacity(0.80)?;
+
+            let bar_start = px(56.0);
+            let bar_end = rem_x - px(8.0);
+            let bar_w = (bar_end - bar_start).max(10.0);
+            let progress = if dur > 0 { (pos as f32 / dur as f32).clamp(0.08, 1.0) } else { 0.65 };
+            let bar_y = scrub_y + (el_label.height - px(4.0)) / 2.0;
+            add_rounded_box(c, layers, bar_start, bar_y, bar_w, px(4.0), px(2.0), rgba(255, 255, 255, 42), None)?;
+            add_rounded_box(c, layers, bar_start, bar_y, bar_w * progress, px(4.0), px(2.0), rgba(255, 255, 255, 255), None)?;
+
+            let bot_y = px(106.0);
+            let lyrics_icon = gfx.glyph_brush(&[('\u{E8BD}', 1.0)], scale, Ink::Light)?;
+            add_visual(c, layers, &lyrics_icon.brush.cast()?, px(22.0), bot_y, lyrics_icon.width, lyrics_icon.height)?;
+            self.island_hits.push(geometry.hit(px(14.0), bot_y - px(4.0), px(30.0), px(28.0), IslandAction::ToggleLyrics));
+
+            let prev_glyph = gfx.glyph_brush(&[('\u{25C0}', 0.85), ('\u{25C0}', 0.85)], scale, Ink::Light)?;
+            let prev_x = px(68.0);
+            add_visual(c, layers, &prev_glyph.brush.cast()?, prev_x, bot_y, prev_glyph.width, prev_glyph.height)?;
+            self.island_hits.push(geometry.hit(prev_x - px(6.0), bot_y - px(4.0), px(26.0), px(28.0), IslandAction::Media(MediaControl::Previous)));
+
+            let p_center = px(112.0);
+            if track.playing {
+                let bar_w = px(3.0);
+                let bar_h = px(12.0);
+                let bar_r = px(1.5);
+                let bar_gap = px(3.5);
+                let p_x = p_center - (2.0 * bar_w + bar_gap) / 2.0;
+                let p_y = bot_y + (px(14.0) - bar_h) / 2.0;
+                add_rounded_box(c, layers, p_x, p_y, bar_w, bar_h, bar_r, rgba(255, 255, 255, 255), None)?;
+                add_rounded_box(c, layers, p_x + bar_w + bar_gap, p_y, bar_w, bar_h, bar_r, rgba(255, 255, 255, 255), None)?;
+            } else {
+                let play_sym = gfx.glyph_brush(&[('\u{25B6}', 1.15)], scale, Ink::Light)?;
+                add_visual(c, layers, &play_sym.brush.cast()?, p_center - play_sym.width / 2.0, bot_y, play_sym.width, play_sym.height)?;
+            }
+            self.island_hits.push(geometry.hit(p_center - px(14.0), bot_y - px(4.0), px(28.0), px(28.0), IslandAction::Media(MediaControl::PlayPause)));
+
+            let next_glyph = gfx.glyph_brush(&[('\u{25B6}', 0.85), ('\u{25B6}', 0.85)], scale, Ink::Light)?;
+            let next_x = px(150.0);
+            add_visual(c, layers, &next_glyph.brush.cast()?, next_x, bot_y, next_glyph.width, next_glyph.height)?;
+            self.island_hits.push(geometry.hit(next_x - px(6.0), bot_y - px(4.0), px(26.0), px(28.0), IslandAction::Media(MediaControl::Next)));
+
+            let divider_x = px(232.0);
+            add_rounded_box(c, layers, divider_x, px(18.0), px(1.0), px(112.0), 0.5, rgba(255, 255, 255, 28), None)?;
+
+            let lyrics_x = px(250.0);
+            let line1 = gfx.text_brush_sized("to find you by the sea", scale, 12.0, false, Ink::Light)?;
+            let l1_vis = add_visual(c, layers, &line1.brush.cast()?, lyrics_x, px(36.0), line1.width, line1.height)?;
+            l1_vis.SetOpacity(0.42)?;
+
+            let line2 = gfx.text_brush_sized("every wing a little song", scale, 14.5, true, Ink::Light)?;
+            add_visual(c, layers, &line2.brush.cast()?, lyrics_x, px(62.0), line2.width, line2.height)?;
+
+            let line3 = gfx.text_brush_sized("that carries us along", scale, 12.0, false, Ink::Light)?;
+            let l3_vis = add_visual(c, layers, &line3.brush.cast()?, lyrics_x, px(90.0), line3.width, line3.height)?;
+            l3_vis.SetOpacity(0.42)?;
+        }
+
         Ok(())
     }
 
@@ -2775,7 +3443,7 @@ impl MenuBar {
     }
 
     pub fn scroll_usage_at(&mut self, point: POINT, delta: i16) -> Result<bool> {
-        if !self.visible || (self.auto_hide && !self.revealed) || delta == 0 {
+        if !self.visible || self.is_hidden() || delta == 0 {
             return Ok(false);
         }
         let Some(viewport) = &self.usage_viewport else {
@@ -2967,6 +3635,8 @@ fn available_panel(open: Option<Island>, music: bool, usage: bool) -> Option<Isl
     open.filter(|island| match island {
         Island::Music => music,
         Island::Usage => usage,
+        Island::Charging => true,
+        Island::IdleEyes => false,
     })
 }
 
@@ -3150,15 +3820,20 @@ fn island_shadow(
     Ok(host)
 }
 
+struct IslandSurface {
+    content: VisualCollection,
+    shell: ContainerVisual,
+    content_container: ContainerVisual,
+}
+
 fn island_surface(
     gfx: &Gfx,
     look: &Look,
     layers: &VisualCollection,
     geometry: IslandGeometry,
     island_height: f32,
-) -> Result<VisualCollection> {
+) -> Result<IslandSurface> {
     let c = &gfx.compositor;
-    let px = |v| geometry.px(v);
     let island_left = geometry.left;
     let island_width = geometry.width;
     let scale = geometry.scale;
@@ -3166,59 +3841,24 @@ fn island_surface(
     let island = c.CreateContainerVisual()?;
     island.SetSize(size)?;
     island.SetOffset(Vector3::new(island_left.round(), 0.0, 0.0))?;
-    let content = island.Children()?;
-    let silhouette = gfx.island_mask(island_width, island_height, scale)?;
-    content.InsertAtTop(&island_shadow(c, &silhouette.cast()?, size, geometry)?)?;
 
-    let tint = match (look.light, look.glass) {
-        (true, true) => rgba(247, 249, 252, 243),
-        (false, true) => rgba(7, 9, 13, 242),
-        (true, false) => rgba(247, 249, 252, 255),
-        (false, false) => rgba(10, 12, 17, 255),
+    let shell = c.CreateContainerVisual()?;
+    shell.SetSize(size)?;
+    let shell_children = shell.Children()?;
+
+    let silhouette = gfx.island_mask(island_width, island_height, scale)?;
+
+    let tint = if look.light {
+        rgba(247, 249, 252, 255)
+    } else {
+        rgba(0, 0, 0, 255)
     };
-    if look.glass {
-        // The backdrop cannot be used as a mask-brush source. Inset its
-        // rounded clip so it stays entirely inside the curved silhouette.
-        let inset = (12.0 * scale)
-            .min(island_width / 5.0)
-            .min(island_height / 2.0);
-        let glass_width = island_width - inset * 2.0;
-        let glass = c.CreateContainerVisual()?;
-        glass.SetSize(Vector2 {
-            X: glass_width,
-            Y: island_height,
-        })?;
-        glass.SetOffset(Vector3 {
-            X: inset,
-            Y: 0.0,
-            Z: 0.0,
-        })?;
-        let outline = c.CreateRoundedRectangleGeometry()?;
-        let lift = px(22.0);
-        outline.SetSize(Vector2 {
-            X: glass_width,
-            Y: island_height + lift,
-        })?;
-        outline.SetOffset(Vector2 { X: 0.0, Y: -lift })?;
-        outline.SetCornerRadius(Vector2 { X: lift, Y: lift })?;
-        glass.SetClip(&c.CreateGeometricClipWithGeometry(&outline)?)?;
-        add_visual(
-            c,
-            &glass.Children()?,
-            &c.CreateHostBackdropBrush()?.cast()?,
-            0.0,
-            0.0,
-            glass_width,
-            island_height,
-        )?;
-        content.InsertAtTop(&glass)?;
-    }
     let masked = c.CreateMaskBrush()?;
     masked.SetSource(&c.CreateColorBrushWithColor(tint)?)?;
     masked.SetMask(&silhouette)?;
     add_visual(
         c,
-        &content,
+        &shell_children,
         &masked.cast()?,
         0.0,
         0.0,
@@ -3226,8 +3866,19 @@ fn island_surface(
         island_height,
     )?;
 
+    let content_container = c.CreateContainerVisual()?;
+    content_container.SetSize(size)?;
+    let content = content_container.Children()?;
+
+    island.Children()?.InsertAtTop(&shell)?;
+    island.Children()?.InsertAtTop(&content_container)?;
+
     layers.InsertAtTop(&island)?;
-    Ok(content)
+    Ok(IslandSurface {
+        content,
+        shell,
+        content_container,
+    })
 }
 
 fn bubble_surface(
@@ -3529,6 +4180,47 @@ fn draw_bubble_usage(
     Ok(anchors)
 }
 
+fn boring_clock_text() -> (String, String) {
+    use windows::Win32::Globalization::{GetDateFormatEx, GetTimeFormatEx};
+    use windows::core::w;
+    let mut date = [0u16; 64];
+    let mut time = [0u16; 32];
+    let (date_len, time_len) = unsafe {
+        (
+            GetDateFormatEx(
+                None,
+                Default::default(),
+                None,
+                w!("ddd d MMM yyyy"),
+                Some(&mut date),
+                None,
+            ),
+            GetTimeFormatEx(None, Default::default(), None, w!("HH:mm"), Some(&mut time)),
+        )
+    };
+    let text = |buf: &[u16], len: i32| String::from_utf16_lossy(&buf[..(len - 1).max(0) as usize]);
+    let d = text(&date, date_len);
+    let t = text(&time, time_len);
+    (d, t)
+}
+
+fn format_secs(secs: u32) -> String {
+    let m = secs / 60;
+    let s = secs % 60;
+    format!("{m:02}:{s:02}")
+}
+
+fn format_remaining(pos: u32, dur: u32) -> String {
+    if dur > pos {
+        let diff = dur - pos;
+        let m = diff / 60;
+        let s = diff % 60;
+        format!("-{m:02}:{s:02}")
+    } else {
+        "-00:00".to_string()
+    }
+}
+
 fn track_title(track: &Track) -> &str {
     if track.title.trim().is_empty() {
         strings::text().media_title
@@ -3686,6 +4378,7 @@ impl Drop for MenuBar {
     fn drop(&mut self) {
         self.accessories = None;
         self.exit_animation = None;
+        self.island_exit_animation = None;
         self.media = None;
         ISLAND_HOOK_WINDOW.store(0, Ordering::Relaxed);
         edge_watch::set_menu_bar(None);
@@ -3725,7 +4418,7 @@ mod island_tests {
             })?
         };
         let gfx = Gfx::new()?;
-        let mut bar = MenuBar::create(&gfx, false, false, true, MenuBarWidgets::default())?;
+        let mut bar = MenuBar::create(&gfx, false, false, true, false, MenuBarWidgets::default())?;
         bar.set_visible(false)?;
         bar.audio = None;
         let mut look = bar.look.clone().context("initial look")?;
@@ -3959,7 +4652,7 @@ mod island_tests {
             })?
         };
         let gfx = Gfx::new()?;
-        let mut bar = MenuBar::create(&gfx, false, false, true, MenuBarWidgets::default())?;
+        let mut bar = MenuBar::create(&gfx, false, false, true, false, MenuBarWidgets::default())?;
         bar.set_visible(false)?;
         bar.audio = None; // This fixture can never change the user's audio.
         bar.status.volume = Some(Volume {
@@ -4127,7 +4820,7 @@ mod island_tests {
             })?
         };
         let gfx = Gfx::new()?;
-        let mut bar = MenuBar::create(&gfx, false, false, true, MenuBarWidgets::default())?;
+        let mut bar = MenuBar::create(&gfx, false, false, true, false, MenuBarWidgets::default())?;
         bar.set_visible(false)?;
         let mut look = bar.look.clone().context("initial look")?;
         look.track = None;
@@ -4220,7 +4913,7 @@ mod island_tests {
             })?
         };
         let gfx = Gfx::new()?;
-        let mut bar = MenuBar::create(&gfx, false, true, true, MenuBarWidgets::default())?;
+        let mut bar = MenuBar::create(&gfx, false, true, true, false, MenuBarWidgets::default())?;
         bar.set_visible(false)?;
         assert!(!bar.accessories_enabled && bar.accessories.is_none());
         bar.restart_accessories(&gfx)?;
@@ -4294,7 +4987,7 @@ mod island_tests {
             })?
         };
         let gfx = Gfx::new()?;
-        let mut bar = MenuBar::create(&gfx, false, true, true, MenuBarWidgets::default())?;
+        let mut bar = MenuBar::create(&gfx, false, true, true, false, MenuBarWidgets::default())?;
         bar.set_visible(false)?;
         bar.accessories = None;
         let mut look = bar.look.clone().context("missing initial menu bar")?;
@@ -4358,7 +5051,7 @@ mod island_tests {
         };
         let gfx = Gfx::new()?;
         strings::set_language(Language::Es);
-        let mut bar = MenuBar::create(&gfx, false, true, true, MenuBarWidgets::default())?;
+        let mut bar = MenuBar::create(&gfx, false, true, true, false, MenuBarWidgets::default())?;
         assert!(
             bar.look
                 .as_ref()
@@ -4399,12 +5092,12 @@ mod island_tests {
             })?
         };
         let gfx = Gfx::new()?;
-        let mut bar = MenuBar::create(&gfx, false, true, true, MenuBarWidgets::default())?;
+        let mut bar = MenuBar::create(&gfx, false, true, true, false, MenuBarWidgets::default())?;
         assert!(
             !unsafe { IsWindowVisible(bar.hwnd) }.as_bool(),
             "auto-hide must apply before the first frame"
         );
-        bar.set_auto_hide(true)?;
+        bar.set_auto_hide(true, false)?;
         for _ in 0..3 {
             assert!(!unsafe { IsWindowVisible(bar.hwnd) }.as_bool());
             assert_eq!(
@@ -4461,9 +5154,9 @@ mod island_tests {
             }
         }
         assert!(!unsafe { IsWindowVisible(bar.hwnd) }.as_bool());
-        bar.set_auto_hide(false)?;
+        bar.set_auto_hide(false, false)?;
         assert!(unsafe { IsWindowVisible(bar.hwnd) }.as_bool());
-        bar.set_auto_hide(true)?;
+        bar.set_auto_hide(true, false)?;
         assert!(!unsafe { IsWindowVisible(bar.hwnd) }.as_bool());
         bar.edge_rested(
             &gfx,
@@ -4501,9 +5194,9 @@ mod island_tests {
             })?
         };
         let gfx = Gfx::new()?;
-        let mut bar = MenuBar::create(&gfx, false, true, true, MenuBarWidgets::default())?;
+        let mut bar = MenuBar::create(&gfx, false, true, true, false, MenuBarWidgets::default())?;
         bar.set_app_name(&gfx, "Muelle animation test")?;
-        bar.set_auto_hide(true)?;
+        bar.set_auto_hide(true, false)?;
         let inside = POINT {
             x: bar.bounds.left + 100,
             y: bar.bounds.top,

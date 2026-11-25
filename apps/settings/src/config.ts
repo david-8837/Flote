@@ -4,6 +4,7 @@ export type Language = "auto" | "es" | "en" | "fr";
 export type IslandStyle = "notch" | "bubble";
 export type GenieSpeed = "normal" | "fast" | "faster";
 export type DockPosition = "left" | "bottom" | "right";
+export type SideNotchEdge = "right" | "left";
 
 /** Mirrors `muelle_config::Config`. */
 export interface Config {
@@ -11,6 +12,7 @@ export interface Config {
   pinned: string[];
   recent: string[];
   autoHide: boolean;
+  intellihide: boolean;
   autoHideDelayMs: number | null;
   iconSize: number;
   magnification: boolean;
@@ -25,6 +27,7 @@ export interface Config {
   showMinimized: boolean;
   menuBar: boolean;
   menuBarAutoHide: boolean;
+  menuBarIntellihide: boolean;
   aiUsage: boolean;
   menuBarMusic: boolean;
   menuBarIslandStyle: IslandStyle;
@@ -45,6 +48,14 @@ export interface Config {
   shortcutsFolder: string | null;
   /** Custom icons chosen by the user for apps or PWAs (`app_id` -> file path). */
   customIcons?: Record<string, string>;
+  topNotch: boolean;
+  topNotchMusic: boolean;
+  topNotchLyrics: boolean;
+  topNotchIdleEyes: boolean;
+  topNotchCharging: boolean;
+  sideNotch: boolean;
+  sideNotchAutoHide: boolean;
+  sideNotchEdge: SideNotchEdge;
 }
 
 export const ICON_SIZE = { min: 20, max: 96 } as const;

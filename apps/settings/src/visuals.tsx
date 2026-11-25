@@ -13,6 +13,7 @@ const PATHS = {
   windows: <><rect x="3" y="3" width="13" height="11" rx="2" /><path d="M8 17v2a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2" /><path d="M6 7h7" /></>,
   genie: <><path d="M4 4h16v9c0 4-8 3-8 7M4 4v9c0 4 8 3 8 7M9 21h6M7 8h10" /></>,
   menu: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18m-5-3h2M6 6h1" /></>,
+  notch: <><rect x="3" y="3" width="18" height="18" rx="3" /><path d="M7 3h10v2a3 3 0 0 1-3 3h-4a3 3 0 0 1-3-3V3z" fill="currentColor" /></>,
   music: <><path d="M9 17V5l12-2v12M9 9l12-2" /><ellipse cx="6" cy="18" rx="3" ry="2" /><ellipse cx="18" cy="16" rx="3" ry="2" /></>,
   ai: <><path d="m12 2 2.6 7.4L22 12l-7.4 2.6L12 22l-2.6-7.4L2 12l7.4-2.6z" /></>,
   headphones: <><path d="M4 14v-3a8 8 0 0 1 16 0v3" /><rect x="3" y="12" width="4" height="8" rx="2" /><rect x="17" y="12" width="4" height="8" rx="2" /></>,

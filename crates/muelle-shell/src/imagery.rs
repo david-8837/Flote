@@ -86,6 +86,50 @@ pub fn circular(image: IconImage) -> IconImage {
     }
 }
 
+/// Center crop and round corners, before sharing the image with UI.
+#[must_use]
+pub fn rounded_square(image: IconImage, corner_radius: f32) -> IconImage {
+    let side = image.width.min(image.height);
+    let (left, top) = ((image.width - side) / 2, (image.height - side) / 2);
+    let mut bgra = Vec::with_capacity((side * side * 4) as usize);
+    let r = corner_radius.clamp(0.0, side as f32 / 2.0);
+    for y in 0..side {
+        for x in 0..side {
+            let offset = (((y + top) * image.width + x + left) * 4) as usize;
+            let px = x as f32 + 0.5;
+            let py = y as f32 + 0.5;
+            let dx = if px < r {
+                r - px
+            } else if px > side as f32 - r {
+                px - (side as f32 - r)
+            } else {
+                0.0
+            };
+            let dy = if py < r {
+                r - py
+            } else if py > side as f32 - r {
+                py - (side as f32 - r)
+            } else {
+                0.0
+            };
+            let coverage = if dx > 0.0 && dy > 0.0 {
+                let dist = dx.hypot(dy);
+                (r - dist + 0.5).clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            for channel in &image.bgra[offset..offset + 4] {
+                bgra.push((f32::from(*channel) * coverage).round() as u8);
+            }
+        }
+    }
+    IconImage {
+        width: side,
+        height: side,
+        bgra,
+    }
+}
+
 /// Read the current monitor's wallpaper once on a blocking worker. Only the
 /// small decoded preview leaves this function; its local path is not exposed.
 #[must_use]

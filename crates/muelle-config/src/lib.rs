@@ -33,6 +33,10 @@ pub enum ConfigError {
     Serialize(#[from] serde_json::Error),
 }
 
+const fn default_true() -> bool {
+    true
+}
+
 /// User settings. Missing fields use their default values, so adding fields
 /// does not break existing configuration files.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,6 +55,10 @@ pub struct Config {
     pub taskbar_pins: Option<Vec<String>>,
     #[serde(alias = "auto_hide")]
     pub auto_hide: bool,
+    /// Keep dock visible on desktop, hide when windows overlap or maximize (Intellihide).
+    #[serde(default = "default_true")]
+    #[serde(alias = "intellihide")]
+    pub intellihide: bool,
     /// Hover dwell delay before revealing the dock in milliseconds (0 ms to 400 ms).
     /// Range: 0 to 400 ms (0 ms = instant). Default: 250 ms.
     #[serde(alias = "auto_hide_delay_ms")]
@@ -88,6 +96,10 @@ pub struct Config {
     pub menu_bar: bool,
     /// Keep the menu bar off screen until the pointer touches the top edge.
     pub menu_bar_auto_hide: bool,
+    /// Keep the menu bar visible on desktop, hide when windows overlap or maximize (Intellihide).
+    #[serde(default = "default_true")]
+    #[serde(alias = "menu_bar_intellihide")]
+    pub menu_bar_intellihide: bool,
     /// Show supported AI providers' plan usage in the menu bar.
     pub ai_usage: bool,
     /// Show what is playing (title, controls) in the menu bar. With this and
@@ -130,6 +142,31 @@ pub struct Config {
     /// Custom icons chosen by the user for apps or PWAs (`app_id` -> file path).
     #[serde(default)]
     pub custom_icons: std::collections::HashMap<String, String>,
+    /// Top notch widget at the top center of the screen.
+    #[serde(default = "default_true")]
+    pub top_notch: bool,
+    /// Music player in the top notch.
+    #[serde(default = "default_true")]
+    pub top_notch_music: bool,
+    /// Lyrics mode expansion in the top notch.
+    #[serde(default = "default_true")]
+    pub top_notch_lyrics: bool,
+    /// Mascot / Idle eyes in the top notch.
+    #[serde(default = "default_true")]
+    pub top_notch_idle_eyes: bool,
+    /// Charging confirmation banner in the top notch.
+    #[serde(default = "default_true")]
+    pub top_notch_charging: bool,
+
+    /// Vertical side notch widget for AI usage on the screen edge.
+    #[serde(default = "default_true")]
+    pub side_notch: bool,
+    /// Auto-hide the side notch into the screen edge until hovered.
+    #[serde(default)]
+    pub side_notch_auto_hide: bool,
+    /// Edge position of the side notch ("right" or "left").
+    #[serde(default)]
+    pub side_notch_edge: SideNotchEdge,
 }
 
 /// Pinned apps the user gathered in one dock icon by dropping one on
@@ -179,6 +216,14 @@ impl GenieSpeed {
             Self::Faster => 0.25,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SideNotchEdge {
+    #[default]
+    Right,
+    Left,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -277,6 +322,7 @@ impl Default for Config {
             recent: Vec::new(),
             taskbar_pins: None,
             auto_hide: false,
+            intellihide: true,
             auto_hide_delay_ms: Some(DEFAULT_AUTO_HIDE_DELAY_MS),
             icon_size: 48,
             magnification: true,
@@ -291,6 +337,7 @@ impl Default for Config {
             show_minimized: false,
             menu_bar: true,
             menu_bar_auto_hide: false,
+            menu_bar_intellihide: true,
             ai_usage: true,
             menu_bar_music: true,
             menu_bar_island_style: IslandStyle::Notch,
@@ -309,6 +356,14 @@ impl Default for Config {
             language: Language::Auto,
             shortcuts_folder: None,
             custom_icons: std::collections::HashMap::new(),
+            top_notch: true,
+            top_notch_music: true,
+            top_notch_lyrics: true,
+            top_notch_idle_eyes: true,
+            top_notch_charging: true,
+            side_notch: true,
+            side_notch_auto_hide: false,
+            side_notch_edge: SideNotchEdge::Right,
         }
     }
 }
@@ -352,7 +407,8 @@ pub fn load(path: &Path) -> Result<Option<Config>, ConfigError> {
             });
         }
     };
-    serde_json::from_str(&text)
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    serde_json::from_str(text)
         .map(|config: Config| Some(config.sanitized()))
         .map_err(|source| ConfigError::Parse {
             path: path.to_owned(),
