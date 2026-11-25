@@ -20,9 +20,13 @@ pub fn draw_companion_face(list: &mut DrawList, cx: f32, cy: f32, s: f32, c: &Co
     let highlight = rgba(255, 255, 255, 0.85);
 
     if c.eyes_closed {
-        // Closed eyes: gentle arcs.
+        // Closed eyes: gentle arcs, with a small glint so the blink keeps its sparkle.
         list.stroke_arc(eye_lx, eye_y, eye_r, 180.0, 360.0, eye_r * 0.5, eye_color, 8);
         list.stroke_arc(eye_rx, eye_y, eye_r, 180.0, 360.0, eye_r * 0.5, eye_color, 8);
+        let glint_r = eye_r * 0.3;
+        let glint_y = eye_y - eye_r * 0.2;
+        list.fill_circle(eye_lx - eye_r * 0.3, glint_y, glint_r, highlight);
+        list.fill_circle(eye_rx - eye_r * 0.3, glint_y, glint_r, highlight);
     } else {
         list.fill_circle(eye_lx, eye_y, eye_r, eye_color);
         list.fill_circle(eye_rx, eye_y, eye_r, eye_color);
