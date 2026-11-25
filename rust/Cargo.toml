@@ -1,0 +1,29 @@
+[package]
+name = "notch-recreation"
+version = "0.1.0"
+edition = "2021"
+description = "MacBook Dynamic Notch Recreation — native Rust rebuild (winit + wgpu)"
+license = "MIT"
+
+# Standalone workspace: this crate is its own root (it lives inside the
+# Flote repo but is a separate project, not a workspace member).
+[workspace]
+
+[dependencies]
+winit = "0.30"
+wgpu = "22"
+pollster = "0.4"
+bytemuck = { version = "1", features = ["derive"] }
+earcut = "0.1"
+
+# Added with their modules in later phases:
+# glyphon = "0.3"
+# rustybuzz = "0.10"
+# serde = { version = "1", features = ["derive"] }
+# serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
